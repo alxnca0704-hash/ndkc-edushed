@@ -17,14 +17,22 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   }),
+  courses: defineTable({
+    name: v.string(),
+    code: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_code", ["code"]),
   subjects: defineTable({
     name: v.string(),
     durationMinutes: v.number(),
     roomId: v.id("rooms"),
+    courseId: v.id("courses"),
+    year: v.union(v.literal(1), v.literal(2), v.literal(3), v.literal(4)),
     teacherId: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index("by_teacherId", ["teacherId"]),
+  }).index("by_teacherId", ["teacherId"]).index("by_courseId", ["courseId"]),
   availability: defineTable({
     teacherId: v.string(),
     blockedSlots: v.array(v.string()),

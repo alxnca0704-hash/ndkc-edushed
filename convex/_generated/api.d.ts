@@ -9,6 +9,7 @@
  */
 
 import type * as availability from "../availability.js";
+import type * as courses from "../courses.js";
 import type * as migrations from "../migrations.js";
 import type * as roles from "../roles.js";
 import type * as rooms from "../rooms.js";
@@ -31,6 +32,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   availability: typeof availability;
+  courses: typeof courses;
   migrations: typeof migrations;
   roles: typeof roles;
   rooms: typeof rooms;

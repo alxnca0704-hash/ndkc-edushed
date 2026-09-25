@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { SUBJECT_YEAR_LEVELS } from "@/constants/courses";
+
 export const subjectFormSchema = z.object({
   name: z
     .string()
@@ -12,6 +14,10 @@ export const subjectFormSchema = z.object({
     .positive("Duration must be greater than 0")
     .max(480, "Duration must be 480 minutes or fewer"),
   roomId: z.string().min(1, "Choose a room"),
+  courseId: z.string().min(1, "Choose a course"),
+  year: z.coerce
+    .number()
+    .pipe(z.literal(SUBJECT_YEAR_LEVELS, "Choose a year level")),
   teacherId: z.string().min(1, "Assign a teacher"),
 });
 

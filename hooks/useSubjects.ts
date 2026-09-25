@@ -11,11 +11,13 @@ import type {
   TeacherOption,
 } from "@/types/subjects";
 import type { Room } from "@/types/rooms";
+import type { Course } from "@/types/course";
 
 export interface UseSubjectsResult {
   subjects: SubjectListItem[];
   teachers: TeacherOption[];
   rooms: Room[];
+  courses: Course[];
   isLoading: boolean;
   isEmpty: boolean;
   error: string | null;
@@ -29,6 +31,7 @@ export function useSubjects(): UseSubjectsResult {
   const listQuery = useQuery(api.subjects.listAll);
   const teachersQuery = useQuery(api.teachers.getTeachers);
   const roomsQuery = useQuery(api.rooms.listAll);
+  const coursesQuery = useQuery(api.courses.listAll);
   const syncTeachers = useAction(api.teachers.syncFromClerk);
   const addSubjectMutation = useMutation(api.subjects.create);
   const updateSubjectMutation = useMutation(api.subjects.update);
@@ -51,7 +54,8 @@ export function useSubjects(): UseSubjectsResult {
   const isLoading =
     listQuery === undefined ||
     teachersQuery === undefined ||
-    roomsQuery === undefined;
+    roomsQuery === undefined ||
+    coursesQuery === undefined;
   const error =
     listQuery?.ok === false
       ? listQuery.error
@@ -59,11 +63,14 @@ export function useSubjects(): UseSubjectsResult {
         ? teachersQuery.error
         : roomsQuery?.ok === false
           ? roomsQuery.error
-          : null;
+          : coursesQuery?.ok === false
+            ? coursesQuery.error
+            : null;
 
   const subjects = listQuery?.ok ? listQuery.data : [];
   const teachers = teachersQuery?.ok ? teachersQuery.data : [];
   const rooms = roomsQuery?.ok ? roomsQuery.data : [];
+  const courses = coursesQuery?.ok ? coursesQuery.data : [];
   const isEmpty = !isLoading && !error && subjects.length === 0;
 
   const addSubject = useCallback(
@@ -73,6 +80,7 @@ export function useSubjects(): UseSubjectsResult {
         await addSubjectMutation({
           ...values,
           roomId: values.roomId as Id<"rooms">,
+          courseId: values.courseId as Id<"courses">,
         });
       } finally {
         setIsMutating(false);
@@ -89,6 +97,7 @@ export function useSubjects(): UseSubjectsResult {
           id: id as Id<"subjects">,
           ...values,
           roomId: values.roomId as Id<"rooms">,
+          courseId: values.courseId as Id<"courses">,
         });
       } finally {
         setIsMutating(false);
@@ -113,6 +122,7 @@ export function useSubjects(): UseSubjectsResult {
     subjects,
     teachers,
     rooms,
+    courses,
     isLoading,
     isEmpty,
     error,

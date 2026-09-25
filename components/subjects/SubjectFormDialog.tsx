@@ -21,20 +21,27 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  SUBJECT_YEAR_LEVEL_LABELS,
+  SUBJECT_YEAR_LEVELS,
+} from "@/constants/courses";
 import { ROOM_TYPE_LABELS } from "@/constants/rooms";
 import { errorMessage } from "@/lib/result";
 import { subjectFormSchema } from "@/lib/validation/subject";
+import type { SubjectYearLevel } from "@/types/course";
 import type {
   SubjectFormValues,
   SubjectListItem,
   TeacherOption,
 } from "@/types/subjects";
+import type { Course } from "@/types/course";
 import type { Room } from "@/types/rooms";
 
 export interface SubjectFormDialogProps {
   subject?: SubjectListItem;
   teachers: TeacherOption[];
   rooms: Room[];
+  courses: Course[];
   onSubmit: (values: SubjectFormValues) => Promise<void>;
   onClose: () => void;
 }
@@ -45,6 +52,7 @@ export function SubjectFormDialog({
   subject,
   teachers,
   rooms,
+  courses,
   onSubmit,
   onClose,
 }: SubjectFormDialogProps) {
@@ -54,6 +62,12 @@ export function SubjectFormDialog({
     subject ? String(subject.durationMinutes) : "",
   );
   const [roomId, setRoomId] = useState<string | null>(subject?.roomId ?? null);
+  const [courseId, setCourseId] = useState<string | null>(
+    subject?.courseId ?? null,
+  );
+  const [year, setYear] = useState<string | null>(
+    subject ? String(subject.year) : null,
+  );
   const [teacherId, setTeacherId] = useState<string | null>(
     subject?.teacherId ?? null,
   );
@@ -64,6 +78,7 @@ export function SubjectFormDialog({
   const isEditing = Boolean(subject);
   const noTeachers = teachers.length === 0;
   const noRooms = rooms.length === 0;
+  const noCourses = courses.length === 0;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -72,6 +87,8 @@ export function SubjectFormDialog({
       name,
       durationMinutes,
       roomId: roomId ?? "",
+      courseId: courseId ?? "",
+      year: year ?? "",
       teacherId: teacherId ?? "",
     });
 
@@ -193,6 +210,70 @@ export function SubjectFormDialog({
             </Select>
             {fieldErrors.roomId ? (
               <p className="text-xs text-destructive">{fieldErrors.roomId}</p>
+            ) : null}
+          </div>
+
+          <div className="grid gap-2">
+            <Label>Course</Label>
+            <Select
+              value={courseId}
+              onValueChange={setCourseId}
+              modal={false}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue>
+                  {(value) => {
+                    const course = courses.find((c) => c._id === value);
+                    return (
+                      course?.name ??
+                      (noCourses
+                        ? "No courses available"
+                        : "Select a course")
+                    );
+                  }}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {courses.map((course) => (
+                  <SelectItem key={course._id} value={course._id}>
+                    {course.name} ({course.code})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {fieldErrors.courseId ? (
+              <p className="text-xs text-destructive">{fieldErrors.courseId}</p>
+            ) : null}
+          </div>
+
+          <div className="grid gap-2">
+            <Label>Year level</Label>
+            <Select
+              value={year}
+              onValueChange={setYear}
+              modal={false}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue>
+                  {(value) =>
+                    value
+                      ? SUBJECT_YEAR_LEVEL_LABELS[
+                          Number(value) as SubjectYearLevel
+                        ]
+                      : "Select a year level"
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {SUBJECT_YEAR_LEVELS.map((yearLevel) => (
+                  <SelectItem key={yearLevel} value={String(yearLevel)}>
+                    {SUBJECT_YEAR_LEVEL_LABELS[yearLevel]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {fieldErrors.year ? (
+              <p className="text-xs text-destructive">{fieldErrors.year}</p>
             ) : null}
           </div>
 

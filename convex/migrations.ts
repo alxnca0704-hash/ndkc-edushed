@@ -2,22 +2,30 @@ import { internalMutation } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 
 import { AVAILABILITY_TIME_SLOTS } from "../constants/availability";
+import { DEFAULT_COURSES } from "../constants/courses";
 import {
   DAY_PATTERN_DAY_INDEXES,
   type DayPattern,
 } from "../constants/dayPatterns";
 
-type LegacySubject = Omit<Doc<"subjects">, "roomId"> & {
-  roomId?: Id<"rooms">;
+type LegacySubject = Omit<Doc<"subjects">, "courseId" | "year"> & {
   roomType?: "lecture" | "lab";
+  courseId?: Id<"courses">;
+  year?: 1 | 2 | 3 | 4;
 };
 
 export const backfillSubjectRoomIds = internalMutation({
   args: {},
   handler: async (ctx) => {
     const subjects = await ctx.db.query("subjects").collect();
+    // Subjects written back under the current schema must carry every
+    // required field, so a doc that also predates Course/Year is left to
+    // `backfillSubjectCourseAndYear` (run this one first).
     const legacySubjects = subjects.filter(
-      (subject) => !(subject as LegacySubject).roomId,
+      (subject) =>
+        !(subject as LegacySubject).roomId &&
+        Boolean((subject as LegacySubject).courseId) &&
+        Boolean((subject as LegacySubject).year),
     ) as LegacySubject[];
 
     if (legacySubjects.length === 0) {
@@ -51,6 +59,8 @@ export const backfillSubjectRoomIds = internalMutation({
         name: subject.name,
         durationMinutes: subject.durationMinutes,
         roomId,
+        courseId: subject.courseId as Id<"courses">,
+        year: subject.year as 1 | 2 | 3 | 4,
         teacherId: subject.teacherId,
         createdAt: subject.createdAt,
         updatedAt: subject.updatedAt,
@@ -72,20 +82,26 @@ export const backfillSubjectRemoveDayPattern = internalMutation({
   args: {},
   handler: async (ctx) => {
     const subjects = await ctx.db.query("subjects").collect();
+    const legacySubjects = subjects.filter(
+      (subject) =>
+        Object.prototype.hasOwnProperty.call(subject, "dayPattern") &&
+        Boolean((subject as LegacySubject).courseId) &&
+        Boolean((subject as LegacySubject).year),
+    ) as LegacySubject[];
     let cleaned = 0;
 
-    for (const subject of subjects) {
-      if (Object.prototype.hasOwnProperty.call(subject, "dayPattern")) {
-        await ctx.db.replace(subject._id, {
-          name: subject.name,
-          durationMinutes: subject.durationMinutes,
-          roomId: subject.roomId,
-          teacherId: subject.teacherId,
-          createdAt: subject.createdAt,
-          updatedAt: subject.updatedAt,
-        });
-        cleaned += 1;
-      }
+    for (const subject of legacySubjects) {
+      await ctx.db.replace(subject._id, {
+        name: subject.name,
+        durationMinutes: subject.durationMinutes,
+        roomId: subject.roomId as Id<"rooms">,
+        courseId: subject.courseId as Id<"courses">,
+        year: subject.year as 1 | 2 | 3 | 4,
+        teacherId: subject.teacherId,
+        createdAt: subject.createdAt,
+        updatedAt: subject.updatedAt,
+      });
+      cleaned += 1;
     }
 
     return { cleaned };
@@ -213,5 +229,86 @@ export const backfillAvailabilityDayPairs = internalMutation({
     }
 
     return { converted };
+  },
+});
+
+/**
+ * Seeds the two prototype programs (BSCS, BSIT) so a fresh setup has courses
+ * to assign subjects to. Idempotent: a course whose code already exists is
+ * left alone, so a second run reports 0 seeded.
+ */
+export const seedCourses = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    let seeded = 0;
+
+    for (const course of DEFAULT_COURSES) {
+      const existing = await ctx.db
+        .query("courses")
+        .withIndex("by_code", (q) => q.eq("code", course.code))
+        .unique();
+
+      if (existing) {
+        continue;
+      }
+
+      await ctx.db.insert("courses", {
+        name: course.name,
+        code: course.code,
+        createdAt: now,
+        updatedAt: now,
+      });
+      seeded += 1;
+    }
+
+    return { seeded };
+  },
+});
+
+/**
+ * Subjects now require a Course and a Year level. Existing subject docs were
+ * created before either field existed, so each one is attached to the first
+ * seeded course and year 1. Idempotent: docs that already carry both fields
+ * are left untouched, so a second run reports 0.
+ */
+export const backfillSubjectCourseAndYear = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const courses = await ctx.db.query("courses").order("asc").collect();
+    const fallbackCourse = courses[0];
+
+    if (!fallbackCourse) {
+      throw new Error("No courses exist — run migrations:seedCourses first");
+    }
+
+    const subjects = await ctx.db.query("subjects").collect();
+    const legacySubjects = subjects.filter(
+      (subject) =>
+        !(subject as LegacySubject).courseId || !(subject as LegacySubject).year,
+    ) as LegacySubject[];
+
+    if (legacySubjects.length === 0) {
+      return { backfilled: 0, courseCode: fallbackCourse.code };
+    }
+
+    const now = Date.now();
+    let backfilled = 0;
+
+    for (const subject of legacySubjects) {
+      await ctx.db.replace(subject._id, {
+        name: subject.name,
+        durationMinutes: subject.durationMinutes,
+        roomId: subject.roomId as Id<"rooms">,
+        courseId: subject.courseId ?? fallbackCourse._id,
+        year: subject.year ?? 1,
+        teacherId: subject.teacherId,
+        createdAt: subject.createdAt,
+        updatedAt: now,
+      });
+      backfilled += 1;
+    }
+
+    return { backfilled, courseCode: fallbackCourse.code };
   },
 });

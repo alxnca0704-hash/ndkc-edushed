@@ -16,7 +16,7 @@ This is a prototype scheduling application that helps a school Dean generate a c
 1. Dean or Teacher logs in with a Clerk account that was seeded ahead of time (no self-registration)
 2. User is routed to their dashboard based on their role (Dean or Teacher), set via Clerk metadata
 3. **Dean:** adds Rooms (name, type) — saved to Convex
-4. **Dean:** adds Subjects (name, duration, day pattern MW or TTh, assigned teacher + room — pulled from seeded Clerk teacher accounts and the rooms table) — saved to Convex
+4. **Dean:** adds Subjects (name, duration, assigned course + year level, assigned teacher + room — pulled from seeded Clerk teacher accounts, the courses table, and the rooms table) — saved to Convex
 5. **Teacher:** logs in and marks unavailable days/times — saved to Convex, linked to their Clerk user ID
 6. **Dean:** clicks "Generate Schedule"
 7. System reads Rooms, Subjects, and Availability from Convex, runs the scheduling logic, and writes the resulting schedule back to Convex
@@ -33,7 +33,7 @@ This is a prototype scheduling application that helps a school Dean generate a c
 
 ### Data Layer (Convex)
 
-- Rooms, Subjects, Availability, and generated Schedule are stored as Convex tables
+- Rooms, Courses, Subjects, Availability, and generated Schedule are stored as Convex tables
 - Convex queries/mutations power all CRUD operations and keep the UI in sync in real time
 - Seeded teacher accounts (from Clerk) automatically populate the Dean's "Assigned Teacher" dropdown when creating Subjects
 
@@ -42,15 +42,22 @@ This is a prototype scheduling application that helps a school Dean generate a c
 - Add, view, edit, and delete rooms
 - Each room has a name and type (Lecture/Lab)
 
+### Course Management (Dean)
+
+- Add, view, edit, and delete courses
+- Each course has a name and a short code (e.g. "BS Computer Science" / `BSCS`); the code is unique
+- Seeded on setup with BSCS and BSIT
+
 ### Subject Management (Dean)
 
 - Add, view, edit, and delete subjects
-- Each subject has a name, session duration, a day pattern (MW = Mon &
-  Wed, TTh = Tue & Thu — the subject meets twice a week on those days), an
-  assigned room, and one assigned teacher
+- Each subject has a name, session duration, an assigned course, a year
+  level (1st–4th Year), an assigned room, and one assigned teacher
+- Course and year level are organizational descriptors only — they do not
+  constrain the generated schedule
 - Dean does not set the day/time/room of each session directly — that is
-  decided by the scheduling algorithm (the pattern fixes *which* two days;
-  the algorithm picks the time, applied identically on both days)
+  decided by the scheduling algorithm (it also picks the MW or TTh pattern,
+  applied identically on both days of the pair)
 
 ### Schedule Generation (Dean)
 
@@ -73,9 +80,10 @@ This is a prototype scheduling application that helps a school Dean generate a c
 
 - Clerk authentication with manually seeded Dean and Teacher accounts
 - Role-based routing (Dean vs Teacher dashboard)
-- Convex-backed data storage for Rooms, Subjects, Availability, and Schedules
+- Convex-backed data storage for Rooms, Courses, Subjects, Availability, and Schedules
 - Dean-side Room CRUD
-- Dean-side Subject CRUD (with teacher assignment from seeded accounts)
+- Dean-side Course CRUD
+- Dean-side Subject CRUD (with course/year assignment, teacher assignment from seeded accounts)
 - Teacher-side availability input
 - Teacher-side personal schedule view
 - Generate Schedule action and schedule views for both roles
@@ -94,7 +102,7 @@ This is a prototype scheduling application that helps a school Dean generate a c
 
 1. A seeded Dean and Teacher account can each log in via Clerk and land on the correct dashboard
 2. A Dean can add, edit, and delete a Room in Convex, and changes persist and sync live
-3. A Dean can add, edit, and delete a Subject, including selecting a teacher from seeded accounts
+3. A Dean can add, edit, and delete a Subject, including selecting a course, a year level, and a teacher from seeded accounts
 4. A logged-in Teacher can mark unavailable time slots and see those saved to their account in Convex
 5. Clicking "Generate Schedule" produces a viewable timetable with no UI errors
 6. A Teacher viewing their schedule sees only their own assigned classes, correctly filtered

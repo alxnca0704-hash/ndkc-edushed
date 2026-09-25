@@ -5,29 +5,104 @@ change.
 
 ## Current Phase
 
-Complete — The Algorithm Chooses the Day Pattern (MW / TTh)
-(the Dean no longer picks a subject's MW-vs-TTh pattern; `generate` tries
-both day patterns per subject, prefers MW, and records the chosen pattern on
-the resulting schedule rows — subjects no longer store `dayPattern`)
+Complete — Course Management + Course & Year Assignment on Subjects
+(spec 07). A Course is now a top-level Dean entity at `/dean/courses`, a
+Subject requires a `courseId` + `year` (1–4), and both are surfaced in the
+subject form/table. Course/Year are descriptive only — the scheduler is
+untouched.
 
 ## Current Goal
 
-Remove `dayPattern` from the Subject as a Dean input. The CSP now builds a
-per-subject **domain** with one session-pair option per pattern (MW first,
-then TTh) and backtracks over the combined candidates (most-constrained
-subject first by total candidate count), so a subject is infeasible only when
-BOTH patterns fail. `PlacedSession`/`schedules` rows carry the chosen
-`dayPattern` as an output; `validate` and the GA read it from placed
-sessions; diagnostics explain each failed pattern separately (cause + free
-windows + message per pattern). UI: no "Schedule Pattern" field/column on
-subjects; the schedule table and per-pattern error accordion read the pattern
-from schedule records. Dev was migrated (3 subjects stripped, 6 backfilled
-schedule rows) via an optional→required schema window
-(`migrations:backfillSubjectRemoveDayPattern` +
-`migrations:backfillScheduleDayPatterns`). Lint + build perfectly clean and
-39/39 smoke assertions pass.
+Shipped (see Completed). Remaining follow-ups for this unit: eyeball
+`/dean/courses` and the subject form's new Course/Year selects in the browser
+with a real Dean login, and decide the Course/Year scheduling question
+recorded in Open Questions.
 
 ## Completed
+
+- **Course Management + Course & Year on Subjects (spec 07)** — full unit:
+  - `convex/schema.ts`: new `courses` table (`name`, `code`,
+    `createdAt`/`updatedAt`) with a `by_code` index; `subjects` gains
+    required `courseId` (`v.id("courses")`, new `by_courseId` index) and
+    `year` (`1 | 2 | 3 | 4`).
+  - `convex/courses.ts` — `listAll` (Result union, `{ ok: true, data: [] }`
+    for non-Deans) + `create` / `update` / `remove`, all Dean-gated.
+    Codes are normalized to uppercase and de-duplicated through the
+    `by_code` index (`assertCodeAvailable` → "Course code "X" is already in
+    use"); `remove` refuses while a Subject still references the course
+    (names the blocking subject) so the required `subjects.courseId` can
+    never dangle.
+  - `types/course.ts` (`Course`, `CourseFormValues`, `SubjectYearLevel`),
+    `constants/courses.ts` (`SUBJECT_YEAR_LEVELS`,
+    `SUBJECT_YEAR_LEVEL_LABELS` = "1st Year"…"4th Year", `DEFAULT_COURSES`
+    = BSCS/BSIT). `constants/courses.ts` imports its types **relatively**
+    (`../types/course`) so the Convex compiler can consume it, same trick as
+    `constants/availability.ts`.
+  - `lib/validation/course.ts` (zod `courseFormSchema`: required name,
+    required code, letters/numbers/dashes, uppercased on parse).
+  - `hooks/useCourses.ts` — one hook for the page: `listAll` query,
+    `isLoading`/`isEmpty`/`error`/`isMutating`,
+    `addCourse`/`updateCourse`/`deleteCourse` (mirrors `useRooms`).
+  - `components/courses/` — `CourseManagement.tsx` (page shell: search +
+    add/edit/delete wiring, Skeleton loading, `ErrorState` + reload retry,
+    `EmptyState` + "Add course", no-search-results `EmptyState`),
+    `CoursesTable.tsx` (Name / Code badge / icon actions),
+    `CoursesTableSkeleton.tsx` (row-shaped Skeletons, extracted so the
+    table component only renders rows), `CourseFormDialog.tsx` (add/edit,
+    zod validation, inline field errors, throw-and-catch submit error),
+    `CourseDeleteDialog.tsx` (confirm + inline error). The delete dialog is
+    an addition beyond the spec's file list — the Room/Subject CRUD pattern
+    it mirrors includes one, and delete is in scope.
+  - `app/dean/courses/page.tsx` (thin, renders `<CourseManagement />`),
+    `APP_ROUTES.deanCourses` (`/dean/courses`), and a "Manage Courses"
+    DeanSidebar item (GraduationCap) in the Manage group — no raw path
+    strings (Invariant 2). No new shadcn primitive was needed.
+  - `convex/subjects.ts`: `subjectFields` gains `courseId` + `year`;
+    create/update verify the course exists ("Selected course does not
+    exist"); `listAll` joins courses to expose `courseName`/`courseCode`
+    (falling back to `—`), mirroring the room/teacher joins.
+  - `types/subjects.ts` (`Subject.courseId`/`year`,
+    `SubjectListItem.courseName`/`courseCode`, `SubjectFormValues.courseId`
+    /`year`), `lib/validation/subject.ts` (`courseId` required,
+    `year: z.coerce.number().pipe(z.literal(SUBJECT_YEAR_LEVELS, …))` so
+    the inferred type is the `1 | 2 | 3 | 4` union).
+  - `hooks/useSubjects.ts` also queries `api.courses.listAll` and exposes
+    `courses` for the form — the spec said "populated from `useCourses()`",
+    but one-hook-per-page means the subjects page reads the same
+    `courses.listAll` query the courses page uses instead of nesting hooks
+    (identical to how it already consumes `rooms.listAll` /
+    `teachers.getTeachers`).
+  - `components/subjects/SubjectFormDialog.tsx`: required Course select
+    (name + code, "No courses available" when the list is empty) and
+    required Year select, both above the teacher select, with the shared
+    zod field-error treatment.
+  - `components/subjects/SubjectManagement.tsx`: new **Course** column
+    (code `Badge` + name, like the Category column) and **Year** column
+    (`Year N` outline `Badge`); skeleton rows and the search filter
+    (name/teacher/room/course code/course name/room type/year label) both
+    updated.
+  - Seed + migration: `convex/migrations.ts` gained `seedCourses`
+    (idempotent — inserts the `DEFAULT_COURSES` BSCS/BSIT only when the
+    code is absent) and `backfillSubjectCourseAndYear` (attaches each
+    legacy subject to the first course and year 1, requires the seed to
+    have run first). Ran through the standard **relax → migrate → strict**
+    window (`npx convex dev --once`, optional columns, run both mutations,
+    required columns, push again): `seedCourses` seeded 2,
+    `backfillSubjectCourseAndYear` backfilled 3 (all → BSCS, year 1), and
+    both report 0 on a second run. The two older subject backfills
+    (`backfillSubjectRoomIds`, `backfillSubjectRemoveDayPattern`) now skip
+    docs that predate Course/Year, since a `db.replace` under the strict
+    schema must carry every required field.
+  - Verified: root `npx tsc --noEmit` clean, `npm run lint` (0 errors — the
+    same 5 pre-existing warnings in `convex/_generated/*` +
+    `convex/auth.config.ts`), `npm run build` passes with `/dean/courses`
+    routed, `npx tsx scripts/scheduling-smoke-test.ts` still 39/39 (the
+    engine does not read Course/Year), and against dev: `convex data
+    courses` shows BSCS + BSIT, `convex data subjects` shows all 3 subjects
+    with a `courseId` + `year: 1`, unauthenticated `courses:listAll` /
+    `subjects:listAll` return `{ ok: true, data: [] }` and
+    `courses:create` throws `Unauthorized`.
+  - Not verified in a browser yet (no Dean session here) — see Next Up.
 
 - **Algorithm Chooses the Day Pattern (MW / TTh), not the Dean** — full unit:
   - `convex/scheduling/types.ts`: `SchedulingSubject` no longer carries
@@ -528,24 +603,29 @@ schedule rows) via an optional→required schema window
 
 ## In Progress
 
-- None. Schedule Generation unit remains complete (CSP wired; GA not yet
-  wired).
+- None. Spec 07 (Course Management + subject Course/Year) is complete and
+  pushed to dev; the scheduling engine is unchanged (CSP wired, GA still not).
 
 ## Next Up
 
-1. Teacher My Schedule view (real, read-only, not placeholder) — consumes
+1. Sanity-check spec 07 in the browser with a real Dean login: add/edit/
+   delete a Course at `/dean/courses`, create a Subject with the new
+   Course/Year selects (and confirm submit is blocked without them), and
+   read the Course/Year columns in the subjects table. Lint/build/smoke are
+   green and the dev data is migrated, but the UI has not been eyeballed.
+2. Teacher My Schedule view (real, read-only, not placeholder) — consumes
    the generated `schedules` rows filtered by teacher id
-2. Dean schedule view polish / student-facing schedule (out of scope until
+3. Dean schedule view polish / student-facing schedule (out of scope until
    confirmed in specs)
-3. (Optional, later) Wire `runGA` into the `generate` action once soft
+4. (Optional, later) Wire `runGA` into the `generate` action once soft
    constraints come in scope — `convex/scheduling/ga.ts` is already built,
    standalone-tested (pair-atom chromosomes), and left with a clear call
    site
-4. Sanity-check the 2-column availability grid in the browser (real teacher
+5. Sanity-check the 2-column availability grid in the browser (real teacher
    login): red blocked cells, save/reset round-trip, tooltip labels — the
    pattern keys and grid are covered by lint/build/smoke, but the visual/UX
    hasn't been eyeballed
-5. Sanity-check the `ScheduleGenerationError` accordion in the browser
+6. Sanity-check the `ScheduleGenerationError` accordion in the browser
    (real Dean, school-hours blocks) — the engine diagnostics and the UI
    state machine are verified by the smoke test + build, but a live generate
    failure hasn't been eyeballed.
@@ -635,6 +715,19 @@ schedule rows) via an optional→required schema window
   Management, Room Management, Teacher availability) uses shadcn. Decide
   when/how to migrate the remaining antd components to shadcn, or keep
   antd for them.
+- **Should Course/Year ever become a scheduling constraint?** (spec 07)
+  `subjects.courseId` + `subjects.year` are descriptive/organizational only
+  in this unit — the CSP does not read them, so two subjects from the same
+  Course/Year may still overlap. If a hard constraint is ever wanted (e.g.
+  no two subjects of the same Course/Year at the same time), that is a
+  separate, explicitly-confirmed change to `convex/scheduling/*` — do not
+  add it without a decision. Deleting a Course that Subjects still reference
+  has the same open question as Room delete (below).
+- Course seeding is manual: a brand-new Convex deployment has no courses
+  until `npx convex run 'migrations:seedCourses'` is executed (there is no
+  auto-seed on deploy — same as rooms/subjects, which are also entered by
+  hand). Until then the subject form's Course select reads "No courses
+  available" and submission is blocked, which is intentional.
 - Deleting a Room that is still referenced by Subjects: subjects always
   carry a `roomId` (strict schema), so deleting a referenced room leaves
   subjects pointing at a missing room (rendered as `—`). Decide whether
@@ -647,6 +740,21 @@ schedule rows) via an optional→required schema window
 
 ## Architecture Decisions
 
+- **Course is a top-level entity; `subjects.courseId` + `subjects.year` are
+  organizational only** (spec 07). A Course is just `name` + `code`
+  (Dean-managed, code unique/uppercased) with a `by_code` index; a Subject
+  points at exactly one course and one year level (1–4). The CSP
+  deliberately does **not** read either field, so overlapping subjects from
+  the same Course/Year are still allowed — turning them into constraints is
+  a separate, confirmed decision. Because `courseId` is required, deleting a
+  Course is refused while a Subject references it (it names the blocking
+  subject) — the safe default, in contrast to Room delete (see Open
+  Questions).
+- Course/Year seeds live in `constants/courses.ts` (`DEFAULT_COURSES`) and
+  are applied by the idempotent internal mutation
+  `migrations:seedCourses`, matching the project's existing "idempotent
+  internal mutation run via `npx convex run`" mechanism (there is no
+  auto-seed on deploy, same as rooms/subjects).
 - Taskbar uses shadcn sidebar + lucide-react icons (per spec).
 - Routes live in `constants/routes.ts` only (`APP_ROUTES.deanRooms`,
   `APP_ROUTES.deanSubjects`) — no raw path strings (Invariant 2).
@@ -770,10 +878,12 @@ schedule rows) via an optional→required schema window
   This CLI (Convex 1.46) has **no `schema:push --relax`**, so the window is
   expressed directly in `convex/schema.ts` (make the changed columns
   optional, push, migrate, then finalize and push again). This unit ran
-  `backfillSubjectRemoveDayPattern` (3 subjects) and
-  `backfillScheduleDayPatterns` (6 existing schedule rows) inside that
-  window; earlier units ran `backfillSubjectDayPatterns` (3 docs,
-  since removed) and `backfillAvailabilityDayPairs` (1 doc).
+  `seedCourses` (2 courses) and `backfillSubjectCourseAndYear` (3 subjects)
+  inside that window; earlier units ran
+  `backfillSubjectRemoveDayPattern` (3 subjects, since superseded),
+  `backfillScheduleDayPatterns` (6 schedule rows),
+  `backfillSubjectDayPatterns` (3 docs, since removed) and
+  `backfillAvailabilityDayPairs` (1 doc).
 - The schedule table collapses a clean pair into one row per subject with a
   "Schedule Pattern" badge + human label; a non-clean pair (shouldn't
   happen via `generate`) falls back to per-session rows.
@@ -796,6 +906,9 @@ schedule rows) via an optional→required schema window
 - Spec: `context/spec/06-teacher-availability-fix.md` (Teacher Availability
   by Day-Pair — MW/TTh grid, pattern-based availability model, red blocked
   cells)
+- Spec: `context/spec/07-design-adjust-dean-scheduler.md` (Course CRUD +
+  subject `courseId`/`year`) — added in `d4be6ef`, revised in `11e55ee`;
+  both commits touched only this spec file, no code.
 - Unit: Fixed Day-Pair Scheduling (MW / TTh) — extended spec 05's engine
   from `meetingsPerWeek` to linked `dayPattern` pairs (see Completed)
 - Unit: Teacher Availability by Day-Pair (MW / TTh) — spec 06; ran
@@ -814,6 +927,17 @@ schedule rows) via an optional→required schema window
   no `dayPattern` and all schedule rows do. Note: with
   `CONVEX_DEPLOYMENT` set, `npx convex deploy` targets the project's default
   *production* deployment — dev pushes must go through `convex dev --once`.
+- Unit: Course Management + subject Course/Year (spec 07) — see Completed.
+  Same relax→migrate→strict window: `courseId`/`year` were pushed as
+  `v.optional`, then `npx convex run 'migrations:seedCourses'` (seeded 2) and
+  `npx convex run 'migrations:backfillSubjectCourseAndYear'` (backfilled 3 →
+  BSCS/year 1), then required columns pushed via `npx convex dev --once`.
+  Both mutations report 0 on a re-run. Consequence worth remembering: the
+  older `backfillSubjectRoomIds` / `backfillSubjectRemoveDayPattern`
+  `db.replace` calls can no longer write a doc that lacks a course/year, so
+  they now filter those docs out (a `db.replace` under a strict schema must
+  carry every required field — worth re-checking whenever a new required
+  subject field is added).
 - PowerShell 5.1 caveat: to pass double quotes through `npx convex run
   --inline-query`, write the inner strings with doubled single quotes
   (`query(''rooms'')`), since PS otherwise strips `"` from native args.
