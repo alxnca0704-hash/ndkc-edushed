@@ -43,6 +43,30 @@ export type InfeasibilityCause =
   | "no-room-available"
   | "unknown";
 
+/**
+ * What specifically blocked one day pattern. Produced by the engine
+ * (`convex/scheduling/cspDiagnostics.ts`) so the UI only maps a kind to an
+ * icon/headline and never re-derives the cause.
+ */
+export type ConflictKind =
+  | "room-occupied"
+  | "teacher-unavailable"
+  | "no-shared-window"
+  | "arrangement-conflict";
+
+/** One already-formatted "what/where/when" pair, rendered as-is. */
+export interface ConflictFact {
+  label: string;
+  value: string;
+}
+
+export interface ConflictDetail {
+  kind: ConflictKind;
+  title: string;
+  message: string;
+  facts: readonly ConflictFact[];
+}
+
 export interface FreeWindow {
   start: number;
   end: number;
@@ -54,6 +78,7 @@ export interface InfeasiblePattern {
   day2FreeWindows: readonly FreeWindow[];
   cause: InfeasibilityCause;
   message: string;
+  conflict: ConflictDetail;
 }
 
 export interface InfeasibleSubject {

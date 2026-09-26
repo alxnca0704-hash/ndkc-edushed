@@ -5,22 +5,99 @@ change.
 
 ## Current Phase
 
-Complete — Group Generated Schedule by Course & Year (spec 08). Each
-generated `schedules` row now snapshots the subject's course + year, and
-`/dean/schedule` presents the timetable one Course + Year group at a time
-via a Course & year selector instead of one flat combined table. The
-scheduling engine is untouched (still one global CSP pass over all
-subjects).
+Complete — Conflict Alert on the Generated Schedule page (spec 09). A
+generate failure now renders one shadcn `Alert` (variant `destructive`) per
+unplaceable subject, and each alert names the concrete cause the engine found
+(room + the class holding it + the overlapping time, teacher + the blocked
+window, or the teacher's own classes eating the pair's days). The scheduling
+engine gained a structured `ConflictDetail`; the UI only maps a conflict kind
+to an icon/label. Spec 09's second application point (a failed
+drag-and-drop / auto-adjusted move) has **no code to attach to** — see Open
+Questions.
 
 ## Current Goal
 
-Shipped (see Completed). Remaining follow-up for this unit: eyeball
-`/dean/schedule` in the browser with a real Dean login — switch between
-every Course + Year group, confirm each view shows only that group's
-sessions, and confirm a group with subjects but no classes renders the
-shared `EmptyState`.
+Shipped (see Completed). Remaining follow-up for this unit: force a real
+generate failure in the browser with a Dean login (e.g. block a teacher's
+whole MW pair, or point two subjects at one room) and eyeball the
+`ConflictAlert` — icon per kind, the fact rows, the destructive (not neon red)
+palette, and the single-subject vs accordion-list layouts.
 
 ## Completed
+
+- **Conflict Status Alert on the Generated Schedule Page (spec 09)** — full
+  unit:
+  - Installed shadcn `alert` via the CLI as its own step (`npx shadcn add
+    alert`); only `components/ui/alert.tsx` was added, no dependency or
+    config changes (`cn` was already the project's class-merge helper). The
+    primitive's own `destructive` variant is used as-is — no custom red.
+  - `convex/scheduling/types.ts`: new `ConflictKind`
+    (`"room-occupied" | "teacher-unavailable" | "no-shared-window" |
+    "arrangement-conflict"`), `ConflictFact` (`{ label, value }`,
+    already-formatted), and `ConflictDetail` (`{ kind, title, message, facts }`).
+    `PatternInfeasibility` gains a required `conflict`, so
+    `explainInfeasibility` (via `explainPatternFailure`) now returns each
+    pattern's finding twice: the existing prose `message` and a structured
+    version. `SchedulingSubject` gains an **optional `teacherName`** used only
+    for diagnostics (matching/constraints still use `teacherId`, per Invariant
+    3); `convex/schedule.ts` populates it from the already-joined
+    `SubjectRow.teacherName`.
+  - `convex/scheduling/cspDiagnostics.ts`: message builders
+    (`sharedTeacherMessage` / `roomOccupiedMessage` /
+    `arrangementConflictMessage`) so the prose and the structured copy can
+    never drift; new `blockedWindowsForDay` (the inverse of
+    `freeWindowsForDay` — contiguous blocked runs inside school hours) and
+    `roomBlockersAtFirstClash` (earliest shared start whose room is taken,
+    with the blocking placement per pattern day). Per cause:
+    - `no-room-available` → `room-occupied`: title "`{room}` is already
+      booked" + facts **Room / Booked by / Overlaps** ("Alpha 101",
+      "Mon & Wed 7:30 AM–8:30 AM").
+    - `no-shared-teacher-window` → `teacher-unavailable` when the declared
+      pattern blocks are what kill the window (title "Prof. Reyes is
+      unavailable Tue & Thu 7:30 AM–7:30 PM") or `no-shared-window` when
+      nothing is declared and the teacher's own placed classes differ across
+      the pair ("Prof. Santos has no 60-min window free on both Mon & Wed").
+      Facts: **Teacher / Unavailable / Already teaching** (own classes capped
+      at 3 with "+N more" so a packed week can't flood the alert).
+    - `unknown` → `arrangement-conflict`: "No arrangement of the week fits" +
+      facts **Teacher / Room / Free on its own at**.
+  - `types/schedule.ts` mirrors the three new types plus
+    `InfeasiblePattern.conflict`; the Convex action already returns
+    `InfeasibilityReason[]` verbatim, so nothing changed in `useSchedule`.
+  - `components/schedule/ConflictAlert.tsx` (new): one shadcn `Alert`
+    (`variant="destructive"` by default, `default` accepted for a future
+    non-failure notice) with a `TriangleAlert` icon, the title "Couldn't place
+    {subject}", and one muted block per day pattern — pattern `Badge`, a
+    kind-specific lucide icon + label (`DoorClosed` / `UserX` / `CalendarX` /
+    `Layers` at `size-3.5`), the engine's title + message, and the facts as a
+    `<dl>` label/value grid. Purely presentational: every sentence comes from
+    `ConflictDetail`.
+  - `components/schedule/ScheduleGenerationError.tsx` refactored to use it —
+    the shared muted error region (title + summary + Retry) is unchanged, and
+    the existing per-subject accordion now holds an alert per item (one
+    `ConflictAlert` each, first open) so a multi-failure generate can't become
+    a wall of alerts; a single failure renders the alert directly. The old
+    `Skeleton` circle and the per-day free-window boxes are gone: the
+    free windows are already stated inside the engine's message, so the alert
+    shows title (what), message (why), facts (the specifics) and nothing
+    twice.
+  - `scripts/scheduling-smoke-test.ts`: **55/55** (was 39). New coverage —
+    the room conflict's kind/title/facts (room name, the class holding it,
+    "Mon & Wed 7:30 AM–8:30 AM"), the teacher-unavailable title/facts naming
+    "Prof. Reyes" and the fully-blocked "Tue & Thu 7:30 AM–7:30 PM" window,
+    `conflict.message` being the pattern message verbatim, and a new
+    direct-diagnostics case (four linked 3-hour classes filling Mon + Wed) for
+    `no-shared-window`: the fact cap, the "Busy 101" naming, and the absence
+    of an `Unavailable` fact when nothing is declared blocked. The crowded-room
+    fixtures gained `teacherName`s so the teacher assertions test the real
+    field.
+  - Verified: root `npx tsc --noEmit` clean, `npm run lint` (0 errors — the
+    same 5 pre-existing warnings in `convex/_generated/*` +
+    `convex/auth.config.ts`), `npm run build` passes with `/dean/schedule`
+    routed, `npx tsx scripts/scheduling-smoke-test.ts` 55/55, and functions
+    pushed to dev with `npx convex dev --once` (no schema change → no
+    migration window).
+  - Not verified in a browser (no Dean session here) — see Next Up.
 
 - **Group Generated Schedule by Course & Year (spec 08)** — full unit:
   - `convex/schema.ts`: `schedules` gains required `courseId`
@@ -694,42 +771,60 @@ shared `EmptyState`.
 
 ## In Progress
 
-- None. Spec 08 (Course + Year grouped schedule) is complete and pushed to
-  dev; the scheduling engine is unchanged (CSP wired, GA still not).
+- None. Spec 09 (conflict alert on the generated schedule page) is complete
+  and pushed to dev; the CSP/GA engine is unchanged apart from diagnostic
+  output.
 
 ## Next Up
 
-1. Sanity-check spec 08 in the browser with a real Dean login: switch
+1. Sanity-check spec 09 in the browser with a real Dean login: force a
+   generate failure (block a teacher's whole MW pair, or point two subjects at
+   one room so it is taken at every shared start) and confirm the
+   `ConflictAlert` names the room + the class holding it + the overlapping
+   time, or the teacher + the blocked window, with one alert per failed
+   subject and the accordion when several fail. The alert's border/destructive
+   styling has not been eyeballed.
+2. Sanity-check spec 08 in the browser with a real Dean login: switch
    through every Course + Year group in the `/dean/schedule` selector,
    confirm each view shows only that group's sessions, and confirm a
    group with subjects but no placed classes renders the shared
    `EmptyState`. The selector's grouped `Select` (per-course group
    labels, per-year class counts) has not been eyeballed — group labels
    and mobile layout especially.
-2. Sanity-check spec 07 in the browser with a real Dean login: add/edit/
+3. Sanity-check spec 07 in the browser with a real Dean login: add/edit/
    delete a Course at `/dean/courses`, create a Subject with the new
    Course/Year selects (and confirm submit is blocked without them), and
    read the Course/Year columns in the subjects table. Lint/build/smoke are
    green and the dev data is migrated, but the UI has not been eyeballed.
-3. Teacher My Schedule view (real, read-only, not placeholder) — consumes
+4. Teacher My Schedule view (real, read-only, not placeholder) — consumes
    the generated `schedules` rows filtered by teacher id
-4. Dean schedule view polish / student-facing schedule (out of scope until
+5. Dean schedule view polish / student-facing schedule (out of scope until
    confirmed in specs)
-5. (Optional, later) Wire `runGA` into the `generate` action once soft
+6. (Optional, later) Wire `runGA` into the `generate` action once soft
    constraints come in scope — `convex/scheduling/ga.ts` is already built,
    standalone-tested (pair-atom chromosomes), and left with a clear call
    site
-6. Sanity-check the 2-column availability grid in the browser (real teacher
+7. Sanity-check the 2-column availability grid in the browser (real teacher
    login): red blocked cells, save/reset round-trip, tooltip labels — the
    pattern keys and grid are covered by lint/build/smoke, but the visual/UX
    hasn't been eyeballed
-7. Sanity-check the `ScheduleGenerationError` accordion in the browser
-   (real Dean, school-hours blocks) — the engine diagnostics and the UI
-   state machine are verified by the smoke test + build, but a live generate
-   failure hasn't been eyeballed.
 
 ## Open Questions
 
+- **Spec 09's drag-and-drop half does not exist (asked by the spec, answered —
+  N/A)**: the spec wants the same alert after "a failed or auto-adjusted
+  drag-and-drop action", consumed from a structured `reschedule.ts` result.
+  There is no `reschedule.ts`, no `ScheduleCalendar`, and no drag/auto-reschedule
+  code anywhere in the repo (same finding as the spec 08 calendar bullets —
+  `project-overview.md` lists **manual drag-and-drop schedule editing as Out
+  of Scope**, and Invariant 5 forbids client-side conflict validation).
+  So: the "auto-adjustment succeeded" non-destructive `Alert` variant was
+  deliberately **not** built — there is no producer of that state and
+  inventing one would mean building the out-of-scope feature to justify it.
+  `ConflictAlert` still takes `variant?: "default" | "destructive"` so a future
+  drag/reschedule feature can render a success notice without touching the
+  component. Building that feature needs its own spec plus an explicit
+  decision to move it into scope.
 - **Cross-group conflict scope (asked by spec 08, answered — confirm it's
   the intent)**: the Dean schedule is now *displayed* one Course + Year at a
   time, but generation is still **one global pass over every subject in the
@@ -872,6 +967,30 @@ shared `EmptyState`.
 
 ## Architecture Decisions
 
+- **Conflict explanations are engine output, not UI derivation (spec 09)**: a
+  failed generate hands the UI `InfeasibilityReason[]` where every pattern
+  carries a `ConflictDetail` (`kind` + ready-to-render `title`/`message`/
+  `facts`). `ConflictAlert` maps `kind` to an icon + label and renders the
+  strings verbatim — it never re-derives "who is in that room" or "which
+  window is blocked" from raw scheduling data (the same rule Invariant 5
+  applies to conflict *validation*). The prose `message` is built once and
+  reused as `conflict.message`, so the two can't drift. `no-room-available` /
+  `no-shared-teacher-window` (the coarse `cause`) stay on the diagnostic as the
+  engine's classification; `ConflictKind` is the finer, display-oriented
+  split the UI switches on.
+- **`SchedulingSubject.teacherName` is display-only and optional**: the
+  diagnostics need to say *which* teacher, but every constraint check and
+  occupancy lookup still uses `teacherId` (Invariant 3). Optional means engine
+  fixtures don't have to carry a display name, and a missing one degrades to
+  "The assigned teacher" rather than failing.
+- **The `Alert` keeps shadcn's built-in border** — a deliberate, recorded
+  exception to `code-standards.md`'s "no visible borders by default" (the spec
+  asked for this choice to be written down rather than guessed). The
+  `destructive` variant is stock shadcn — `bg-card` + `text-destructive`, no
+  red fill, no custom/neon red — and the alerts sit inside the muted
+  `bg-muted/30` error region, so without a border a white-on-white alert would
+  vanish; the border is what separates each per-subject alert from the region
+  and from its neighbours.
 - **The Dean schedule is grouped by Course + Year in the UI only**
   (spec 08). `schedules` rows carry the subject's `courseId`/`courseCode`/
   `courseName`/`year` as a generation-time snapshot (consistent with the
@@ -1085,6 +1204,16 @@ shared `EmptyState`.
   N/A and the read-only `ScheduleTable` is what got grouped. Answered the
   spec's real question in Open Questions: conflict checking stays global
   because generation is one CSP pass over all subjects.
+- Spec: `context/spec/09-design-alert-class-conflict.md` (conflict alert on
+  the generated schedule page) — same shape of surprise as spec 08: half the
+  spec (the drag-and-drop / auto-adjustment alert, fed by a structured
+  `reschedule.ts` result) targets code that does not exist, and
+  `project-overview.md` marks manual drag-and-drop Out of Scope. Built the
+  generation-failure half plus the reusable `ConflictAlert`, and left the
+  "auto-adjustment succeeded" non-destructive variant unbuilt (no producer) —
+  the component already accepts `variant="default"` for whenever that feature
+  is explicitly brought into scope. Also installed the shadcn `alert`
+  primitive as its own step first, per `ai-workflow-rules.md`.
 - Unit: Fixed Day-Pair Scheduling (MW / TTh) — extended spec 05's engine
   from `meetingsPerWeek` to linked `dayPattern` pairs (see Completed)
 - Unit: Teacher Availability by Day-Pair (MW / TTh) — spec 06; ran

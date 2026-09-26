@@ -1,5 +1,8 @@
 import { runCSP } from "../convex/scheduling/csp";
-import { freeWindowsForDay } from "../convex/scheduling/cspDiagnostics";
+import {
+  explainPatternFailure,
+  freeWindowsForDay,
+} from "../convex/scheduling/cspDiagnostics";
 import { runGA } from "../convex/scheduling/ga";
 import { validateSolution } from "../convex/scheduling/validate";
 import type {
@@ -476,6 +479,7 @@ function main() {
       id: "a",
       name: "Alpha 101",
       teacherId: "tA",
+      teacherName: "Prof. Cruz",
       roomId: "room-crowded",
       requiredRoomType: "lecture",
       durationMinutes: 60,
@@ -484,6 +488,7 @@ function main() {
       id: "b",
       name: "Beta 101",
       teacherId: "tB",
+      teacherName: "Prof. Reyes",
       roomId: "room-crowded",
       requiredRoomType: "lecture",
       durationMinutes: 60,
@@ -536,7 +541,142 @@ function main() {
       mwPattern !== undefined && mwPattern.message.includes("occupied at every shared start"),
       "room reason message names the root cause",
     );
+
+    console.log("CSP: structured conflict detail names room, subject, and time");
+    const roomConflict = mwPattern?.conflict;
+    check(
+      roomConflict !== undefined && roomConflict.kind === "room-occupied",
+      "MW conflict kind is room-occupied",
+    );
+    check(
+      roomConflict?.title === "Crowded Hall is already booked",
+      "room conflict title names the room",
+    );
+    check(
+      roomConflict?.facts.some((entry) => entry.value === "Crowded Hall") === true,
+      "room conflict facts include the room name",
+    );
+    check(
+      roomConflict?.facts.some((entry) => entry.value === "Alpha 101") === true,
+      "room conflict facts name the class already holding the room",
+    );
+    check(
+      roomConflict?.facts.some(
+        (entry) => entry.value === "Mon & Wed 7:30 AM–8:30 AM",
+      ) === true,
+      "room conflict facts name the overlapping time on both pattern days",
+    );
+    check(
+      roomConflict?.message === mwPattern?.message,
+      "conflict message reuses the pattern diagnostic message verbatim",
+    );
+
+    const tthPattern = reason.patterns.find(
+      (pattern) => pattern.dayPattern === "TTh",
+    );
+    check(
+      tthPattern?.conflict.kind === "teacher-unavailable",
+      "TTh conflict kind is teacher-unavailable (pattern fully blocked)",
+    );
+    check(
+      tthPattern?.conflict.title ===
+        "Prof. Reyes is unavailable Tue & Thu 7:30 AM–7:30 PM",
+      "teacher-unavailable title names the teacher and the blocked window",
+    );
+    check(
+      tthPattern?.conflict.facts.some(
+        (entry) =>
+          entry.label === "Unavailable" &&
+          entry.value === "Tue & Thu 7:30 AM–7:30 PM",
+      ) === true,
+      "teacher-unavailable facts carry the declared blocked window",
+    );
+    check(
+      tthPattern?.conflict.facts.some(
+        (entry) => entry.label === "Teacher" && entry.value === "Prof. Reyes",
+      ) === true,
+      "teacher-unavailable facts name the teacher",
+    );
   }
+
+  console.log("CSP: teacher's own classes explain a no-shared-window conflict");
+  const packedSubject: SchedulingSubject = {
+    id: "packed",
+    name: "Packed 101",
+    teacherId: "t-packed",
+    teacherName: "Prof. Santos",
+    roomId: "room-lecture-1",
+    requiredRoomType: "lecture",
+    durationMinutes: 60,
+  };
+  const packedInput = buildInput(
+    [
+      packedSubject,
+      {
+        id: "busy",
+        name: "Busy 101",
+        teacherId: "t-packed",
+        teacherName: "Prof. Santos",
+        roomId: "room-lecture-2",
+        requiredRoomType: "lecture",
+        durationMinutes: 180,
+      },
+    ],
+    ROOMS,
+    [],
+  );
+  // The teacher's own four linked 3-hour classes fill Mon and Wed end to end,
+  // so nothing is left free on either day even with no declared blocks.
+  const packedPlacements: PlacedSession[] = [0, 3, 6, 9].flatMap(
+    (slotStart) =>
+      [0, 2].map(
+        (dayIndex): PlacedSession => ({
+          subjectId: "busy",
+          teacherId: "t-packed",
+          roomId: "room-lecture-2",
+          dayPattern: "MW",
+          dayIndex,
+          startMinutes: TIME_SLOTS[slotStart].startMinutes,
+          endMinutes: TIME_SLOTS[slotStart + 2].endMinutes,
+        }),
+      ),
+  );
+  const packedPattern = explainPatternFailure(
+    packedSubject,
+    packedInput,
+    packedPlacements,
+    "MW",
+  );
+  check(
+    packedPattern.cause === "no-shared-teacher-window" &&
+      packedPattern.day1FreeWindows.length === 0 &&
+      packedPattern.day2FreeWindows.length === 0,
+    "a fully packed pair of days leaves no free window at all",
+  );
+  check(
+    packedPattern.conflict.kind === "no-shared-window",
+    "no declared block plus a clashing class reports no-shared-window",
+  );
+  check(
+    packedPattern.conflict.title ===
+      "Prof. Santos has no 60-min window free on both Mon & Wed",
+    "no-shared-window title names the teacher and both days",
+  );
+  const teachingFacts = packedPattern.conflict.facts.filter(
+    (entry) => entry.label === "Already teaching",
+  );
+  check(
+    teachingFacts.length === 3 && (teachingFacts[2].value ?? "").includes("+5 more"),
+    "own-class facts are capped at 3 with a count of the rest",
+  );
+  check(
+    teachingFacts.every((entry) => entry.value.includes("Busy 101")),
+    "own-class facts name the classes already on the teacher's pair",
+  );
+  check(
+    !packedPattern.conflict.facts.some((entry) => entry.label === "Unavailable"),
+    "no-shared-window omits the availability fact when nothing is blocked",
+  );
 
   const noRoomsInput = buildInput(SUBJECTS, [], AVAILABILITY);
   const noRoomsResult = runCSP(noRoomsInput);

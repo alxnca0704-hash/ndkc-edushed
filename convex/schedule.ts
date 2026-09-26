@@ -198,6 +198,7 @@ function buildSchedulingInput(
         id: subject._id,
         name: subject.name,
         teacherId: subject.teacherId,
+        teacherName: subject.teacherName,
         roomId: subject.roomId,
         requiredRoomType: room?.type ?? subject.roomType,
         durationMinutes: subject.durationMinutes,
