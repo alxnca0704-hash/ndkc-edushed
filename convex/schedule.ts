@@ -20,7 +20,7 @@ import type {
 import { runCSP } from "./scheduling/csp";
 import { hasActiveConstraint, runGA } from "./scheduling/ga";
 import { validateSolution } from "./scheduling/validate";
-import { isDean } from "./roles";
+import { isDean, roleOf } from "./roles";
 import type {
   InfeasibilityReason,
   SchedulingAvailability,
@@ -173,6 +173,36 @@ export const listAll = query({
       }
 
       const sessions = await ctx.db.query("schedules").order("asc").collect();
+
+      return { ok: true as const, data: sessions };
+    } catch (error) {
+      return { ok: false as const, error: toErrorString(error) };
+    }
+  },
+});
+
+/**
+ * The caller's own schedule rows, read through the `by_teacherId` index.
+ *
+ * The teacher is resolved from the verified Clerk identity on the server, never
+ * from an argument — a client cannot ask for another teacher's rows (Invariant
+ * 3), and a Dean (or anonymous caller) gets the same empty result `rooms.listAll`
+ * gives instead of a throw, so a failed page load surfaces through `error`.
+ */
+export const listMine = query({
+  args: {},
+  handler: async (ctx) => {
+    try {
+      const identity = await ctx.auth.getUserIdentity();
+
+      if (!identity || roleOf(identity) !== "teacher") {
+        return { ok: true as const, data: [] };
+      }
+
+      const sessions = await ctx.db
+        .query("schedules")
+        .withIndex("by_teacherId", (q) => q.eq("teacherId", identity.subject))
+        .collect();
 
       return { ok: true as const, data: sessions };
     } catch (error) {

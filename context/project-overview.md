@@ -98,7 +98,10 @@ This is a prototype scheduling application that helps a school Dean generate a c
 ### My Schedule (Teacher)
 
 - Read-only view showing only the subjects/sessions assigned to the logged-in teacher
-- Displays subject, day, time, and room
+- Grouped by the day pattern the algorithm chose (MW — Mon & Wed, then TTh —
+  Tue & Thu); a subject's two linked sessions read as one class, not two
+- Displays subject, course + year level, time, and room
+- No editing: a teacher cannot move, request, or regenerate a class
 
 ## Scope
 

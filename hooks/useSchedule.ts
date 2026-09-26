@@ -5,6 +5,7 @@ import { useCallback, useMemo, useState } from "react";
 
 import { api } from "@/convex/_generated/api";
 import { SUBJECT_YEAR_LEVEL_LABELS } from "@/constants/courses";
+import { sortSessionsByWeek } from "@/lib/schedule";
 import type { SubjectYearLevel } from "@/types/course";
 import type { OptimizationResult } from "@/types/scheduleSettings";
 import type {
@@ -32,17 +33,6 @@ export interface UseScheduleResult {
    */
   optimization: OptimizationResult | null;
   generate: () => Promise<GenerateScheduleResult>;
-}
-
-function byTimeOfWeek(
-  a: { dayIndex: number; startMinutes: number; subjectName: string },
-  b: { dayIndex: number; startMinutes: number; subjectName: string },
-): number {
-  return (
-    a.dayIndex - b.dayIndex ||
-    a.startMinutes - b.startMinutes ||
-    a.subjectName.localeCompare(b.subjectName)
-  );
 }
 
 function groupKey(courseId: string, year: SubjectYearLevel): string {
@@ -82,7 +72,7 @@ export function useSchedule(): UseScheduleResult {
     (subjectsQuery?.ok === false ? subjectsQuery.error : null);
 
   const sessions = useMemo<ScheduleSession[]>(
-    () => (listQuery?.ok ? [...listQuery.data].sort(byTimeOfWeek) : []),
+    () => (listQuery?.ok ? sortSessionsByWeek(listQuery.data) : []),
     [listQuery],
   );
 

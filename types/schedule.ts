@@ -1,4 +1,5 @@
 import type { SubjectYearLevel } from "@/types/course";
+import type { DayPattern } from "@/constants/dayPatterns";
 import type { RoomType } from "@/types/rooms";
 import type { OptimizationResult } from "@/types/scheduleSettings";
 
@@ -37,6 +38,30 @@ export interface GroupedSchedule {
   label: string;
   subjectCount: number;
   sessions: ScheduleSession[];
+}
+
+/**
+ * One row of a teacher's week: normally a subject's linked pair (the same
+ * class on both days of its day pattern) collapsed into a single line. A pair
+ * the engine would never emit (different times or rooms on the two days)
+ * stays as two sessions and is rendered per session instead.
+ */
+export interface MyScheduleRow {
+  key: string;
+  sessions: readonly ScheduleSession[];
+  /** True when the two sessions share a time and room, i.e. a real linked pair. */
+  isLinkedPair: boolean;
+}
+
+/**
+ * A teacher's sessions grouped by the day pattern the algorithm chose, e.g.
+ * "MW · Mon & Wed". Only patterns the teacher actually has rows for are
+ * included, in MW → TTh order.
+ */
+export interface MyScheduleGroup {
+  dayPattern: DayPattern;
+  label: string;
+  rows: MyScheduleRow[];
 }
 
 export type InfeasibilityCause =

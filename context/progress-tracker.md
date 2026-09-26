@@ -5,29 +5,130 @@ change.
 
 ## Current Phase
 
-Complete — Wire the GA into schedule generation (spec 10). A generate now
-runs the CSP and then, when the Dean has switched on at least one soft
-constraint, the GA on top of the CSP's schedule, scored against the Dean's
-saved weights. The score is a penalty total (lower is better, 0 = no penalty)
-returned in the action's response and shown as a badge beside the Generate
-button; the three penalties (workload, day-spread, idle gaps) are measured
-independently of the weights so the number can be explained. Settings live in
-one `scheduleSettings` row, edited in a shadcn `Dialog` of `Switch` +
-`Slider` rows, and all weights 0 means the GA is skipped and no score is
-shown. Browser verification is still outstanding — see Next Up.
+Complete — the Teacher "My Schedule" page is now the real read-only view
+(spec 11). `/teacher/schedule` no longer renders a placeholder: a new
+teacher-scoped Convex query (`schedule.listMine`) reads the generated
+`schedules` rows through the `by_teacherId` index for the caller's Clerk
+`userId` only, `useMySchedule` groups them by the day pattern the algorithm
+chose (MW — Mon & Wed, then TTh — Tue & Thu) with each subject's linked
+pair collapsed into one line, and `MyScheduleTable` renders
+Subject / Course / Year / Day / Time / Room — stacked cards on a phone, a
+table from `sm` up, with `Badge`s for course and year. Nothing had to be
+re-joined: course, year, room, and the display names are already
+denormalized onto every generated row (spec 08), so the hook only filters,
+sorts, and groups. Browser verification is still outstanding — see Next Up.
 
 ## Current Goal
 
-Shipped (see Completed). Remaining follow-up for this unit: eyeball it in
-the browser with a Dean login — open Optimization, toggle constraints,
-move a weight slider, save, re-open and confirm the values persisted, then
-generate once with a weight on (check the badge, its "lower is better"
-label, and the toast's "generated and optimized") and once with everything
-off (no badge, plain "generated" toast). Also confirm the dialog's
-loading/error/saving states and that Cancel discards unsaved edits.
+Shipped (see Completed). Remaining follow-up for this unit: eyeball it
+in the browser with a real teacher login. Dev is thin here — every one of
+the 8 generated rows belongs to Zyneer Moreno, so the empty state can't
+be reached without a second teacher (or a regenerate with no subject
+assigned to them), and cross-teacher isolation can't be seen by eye until
+a second teacher owns a subject. Confirm the MW / TTh headings, the one
+line per class, the card layout below `sm`, the table from `sm` up, the
+Course/Year badges, the summary line, and the loading skeleton.
 
 
 ## Completed
+
+- **Teacher "My Schedule" page — the real read-only view (spec 11)** — full
+  unit:
+  - `convex/schedule.ts`: new `listMine` query returning the caller's own
+    sessions, read through the `by_teacherId` index that spec 05 created
+    "for the teacher view" (still unused until now). It takes **no
+    arguments**: the teacher is the verified Clerk identity's `subject`,
+    resolved server-side, so a client cannot ask for another teacher's rows
+    (Invariant 3) and there is no id to keep in sync on the client.
+    Anonymous and non-teacher callers get the same
+    `{ ok: true, data: [] }` Result union as `rooms.listAll` /
+    `availability.getMine` rather than a throw, so a failed page load
+    surfaces through the hook's `error` (Invariant 8). `roleOf` came in
+    alongside the existing `isDean` import.
+  - `lib/schedule.ts` (new): `byTimeOfWeek` + `sortSessionsByWeek` — the
+    day → start-time → subject-name week order, **extracted out of
+    `useSchedule`** rather than copied, so the Dean's and the Teacher's view
+    read a generated week identically and two comparators can't drift. The
+    comparator takes the three fields order depends on, and the helper
+    returns a new array (the Convex query result is never sorted in place).
+    `useSchedule` now imports it; its grouping/ordering is unchanged.
+    The file also owns `groupSessionsByDayPattern`, the day-pair grouping
+    (see below) — it is pure and has no React/Convex import, so the shape a
+    teacher sees can be exercised by a plain `tsx` script.
+  - `hooks/useMySchedule.ts` (new): `api.schedule.listMine` + the shared sort
+    and grouping, returning `{ groups, subjectCount, sessionCount, isLoading,
+    isEmpty, error }`. Every field the table shows is already on the
+    generated row, so the hook does no joining at all — the spec's "join in
+    the hook if not denormalized" branch turned out to be unnecessary (spec
+    08 already denormalized course/year/room, names come from spec 05).
+  - **Grouped by day pattern, one line per class** (`groupSessionsByDayPattern`
+    in `lib/schedule.ts`): sessions are bucketed by the `dayPattern` the
+    algorithm chose and rendered MW first, then TTh, and a pattern the
+    teacher has no classes for is left out entirely (no empty heading). Inside
+    a group, a subject's two sessions collapse into **one** row when they
+    share a time and a room — that is what "linked pair" means in the
+    scheduler — so a Mon/Wed class is never split into two lines. A pair that
+    doesn't match (the validator makes this unreachable via `generate`) falls
+    back to one row per session with its own day name rather than lying about
+    a shared time.
+  - `components/schedule/MyScheduleTable.tsx` (new): one `<section>` per day
+    pattern, headed by the pattern `Badge` + its label ("MW · Mon & Wed"),
+    each holding the mobile card list (below `sm`) and the table (from `sm`
+    up) for that group. Columns: Subject / Course / Year / Day / Time / Room,
+    purely read-only (no actions, no drag-and-drop; editing is Dean-only per
+    `architecture.md`). Course is a `Badge` with the code plus a muted name
+    and Year is an outline `Badge`, copied from the Dean's subjects table for
+    the same two fields; the time range is `formatClock` on both ends
+    (`7:30 AM – 8:30 AM`). Day labels come from `AVAILABILITY_DAYS` /
+    `areaPatternLabel`, not a local day or pattern list.
+  - **Mobile-first collapse** (the spec's mobile requirement, and
+    `code-standards.md`'s "tables collapse to a stacked/card layout on small
+    screens"): stacked cards below `sm`, the table from `sm` up. Each card
+    is a `<li>` in a `<ul>` — subject + day-pair label, time, course/Year
+    badges + course name, then Room — separated by `bg-muted/30` background
+    contrast, not borders. This is the **first** table in the repo to do this
+    (see Open Questions).
+  - `components/schedule/MyScheduleTableSkeleton.tsx` (new): mirrors the
+    shape — a group heading, then card blocks below `sm` and six header cells
+    + row-shaped rows from `sm` up. It draws **one** group heading because the
+    real group count isn't known until the query resolves, so a two-group week
+    is slightly taller once loaded.
+  - `components/schedule/MySchedulePage.tsx` (new) +
+    `app/teacher/schedule/page.tsx` (now a plain server component that renders
+    it, like every other page in the app — the old placeholder was the only
+    `"use client"` page file): heading + one-line summary ("4 subjects · 8
+    sessions this week, grouped by day pair.") and the loading → skeleton /
+    error → `ErrorState` + reload retry / empty → `EmptyState` / data → table
+    ladder. **The empty state has no action button**: a teacher can't generate
+    their own schedule (Dean-only), so the copy names the Dean rather than
+    offering a dead "Generate" button.
+  - `context/project-overview.md`: the "My Schedule (Teacher)" feature now
+    states the day-pattern grouping, the course + year columns, and that the
+    view is read-only.
+  - Verification: `npx tsc --noEmit` clean; `npm run lint` 0 errors (the same
+    5 pre-existing warnings in `convex/_generated/*` +
+    `convex/auth.config.ts`); `npm run build` green with `/teacher/schedule`
+    routed; `npx tsx scripts/scheduling-smoke-test.ts` **77/0** (the engine
+    was not touched); `npx convex dev --once` pushed to
+    `dev:astute-akita-425` (functions only — no schema change, so no
+    migration window).
+  - The grouping itself was checked with a throwaway `tsx` script (written to
+    the temp dir, not committed) over the 8 real dev rows: **MW (Mon & Wed)
+    with SE 101 (7:30 AM) then OS 101 (10:30 AM), TTh (Tue & Thu) with
+    CC 106 then HCI 101**, all four collapsed as linked pairs, plus the
+    MW-only teacher (1 group, no empty TTh heading) and a deliberately
+    mismatched pair (not collapsed). If this logic grows, that script is worth
+    promoting into `scripts/` beside the engine smoke test.
+  - The ownership filter was checked **live** with the CLI's `--identity`
+    flag (new discovery, see Session Notes):
+    `npx convex run 'schedule:listMine' --identity
+    '{"subject":"user_3Jj4…","metadata":{"role":"teacher"}}'` returns all 8
+    dev rows, the same query with a **different** teacher id returns `[]`,
+    with a **Dean** identity returns `[]` (a Dean reads `listAll`), and
+    anonymous returns `{ ok: true, data: [] }`. That is the real
+    "never another teacher's classes" proof — but with a synthetic identity,
+    not a signed Clerk session.
+  - Not verified in a browser (no teacher session here) — see Next Up.
 
 - **Schedule Optimization (Dean) — the GA wired into `generate` (spec 10)** —
   full unit:
@@ -847,41 +948,47 @@ loading/error/saving states and that Cancel discards unsaved edits.
 
 ## In Progress
 
-- (none — spec 10 was the only open unit; it is now in Completed.)
+- (none — spec 11 was the only open unit; it is now in Completed.)
 
 ## Next Up
 
-1. Sanity-check spec 10 in the browser with a real Dean login: open
+1. Sanity-check spec 11 in the browser with a real teacher login: confirm
+   `/teacher/schedule` shows only that teacher's classes under the **MW ·
+   Mon & Wed** and **TTh · Tue & Thu** headings, one line per class (not two
+   lines per Mon/Wed class), the Course/Year `Badge`s, the card layout below
+   `sm` and the table from `sm` up, and the loading skeleton matching the
+   loaded shape. The empty state and cross-teacher isolation can't be seen
+   with the current dev data (one teacher owns all 8 rows) — add a second
+   teacher's subject, regenerate, and log in as each teacher.
+2. Sanity-check spec 10 in the browser with a real Dean login: open
    Optimization, toggle each constraint, drag a weight, save, re-open (the
    values must come back from the `scheduleSettings` row), then generate once
    with a weight on and once with everything off. The dialog's
    loading/error/saving states, the "Save settings" disabled-while-unchanged
    rule, Cancel-discards behavior, the score `Badge` + "lower is better" line,
    and the toast wording have not been eyeballed.
-2. Sanity-check spec 09 in the browser with a real Dean login: force a
+3. Sanity-check spec 09 in the browser with a real Dean login: force a
    generate failure (block a teacher's whole MW pair, or point two subjects at
    one room so it is taken at every shared start) and confirm the
    `ConflictAlert` names the room + the class holding it + the overlapping
    time, or the teacher + the blocked window, with one alert per failed
    subject and the accordion when several fail. The alert's border/destructive
    styling has not been eyeballed.
-2. Sanity-check spec 08 in the browser with a real Dean login: switch
+4. Sanity-check spec 08 in the browser with a real Dean login: switch
    through every Course + Year group in the `/dean/schedule` selector,
    confirm each view shows only that group's sessions, and confirm a
    group with subjects but no placed classes renders the shared
    `EmptyState`. The selector's grouped `Select` (per-course group
    labels, per-year class counts) has not been eyeballed — group labels
    and mobile layout especially.
-3. Sanity-check spec 07 in the browser with a real Dean login: add/edit/
+5. Sanity-check spec 07 in the browser with a real Dean login: add/edit/
    delete a Course at `/dean/courses`, create a Subject with the new
    Course/Year selects (and confirm submit is blocked without them), and
    read the Course/Year columns in the subjects table. Lint/build/smoke are
    green and the dev data is migrated, but the UI has not been eyeballed.
-4. Teacher My Schedule view (real, read-only, not placeholder) — consumes
-   the generated `schedules` rows filtered by teacher id
-5. Dean schedule view polish / student-facing schedule (out of scope until
+6. Dean schedule view polish / student-facing schedule (out of scope until
    confirmed in specs)
-6. Sanity-check the 2-column availability grid in the browser (real teacher
+7. Sanity-check the 2-column availability grid in the browser (real teacher
    login): red blocked cells, save/reset round-trip, tooltip labels — the
    pattern keys and grid are covered by lint/build/smoke, but the visual/UX
    hasn't been eyeballed
@@ -1033,9 +1140,66 @@ loading/error/saving states and that Cancel discards unsaved edits.
   styling decision below. Teacher sidebar still mirrors the Dean sidebar
   styling — decide whether to migrate both sidebars to the green accent.
   Registered here rather than invented.
-- `/teacher/schedule` ("My Schedule") is a placeholder page with a real
+- ~~`/teacher/schedule` ("My Schedule") is a placeholder page with a real
   schedule source now available (`schedules` table, `by_teacherId`
-  index) — building the read-only teacher view is the next unit.
+  index)~~ Resolved by spec 11: the page is now the real read-only view over
+  `schedule.listMine`. Two things it surfaced are recorded below: the spec's
+  font instructions don't exist in this app, and no table in the repo has
+  collapsed to cards before.
+- **The spec's UI/UX section describes fonts and a table convention this
+  app doesn't have (asked by spec 11, answered — flagged rather than
+  settled)**: it says to follow `ui-context.md` for "Roboto for table text,
+  Montserrat for the page heading", but `ui-context.md` is still an unfilled
+  template and the app loads **Geist Sans / Geist Mono** via `next/font`
+  (`--font-sans`, with `--font-heading` aliased to it). Introducing two more
+  families for a single page would be a global typography decision, so
+  `MySchedulePage` uses the same heading classes as every other page. If
+  Montserrat/Roboto are actually wanted, they belong in `ui-context.md` +
+  `globals.css` as an app-wide change, with `next/font` loading them.
+- **No table in this repo has collapsed to a card layout (asked by spec 11,
+  answered — first instance, confirm before it becomes convention)**: the
+  spec asked for "the existing convention of collapsing to a stacked/card
+  layout", but every existing table (`ScheduleTable`, `CoursesTable`, the
+  subjects table) uses the shadcn `Table` primitive and inherits its
+  `overflow-x-auto` — which is `code-standards.md`'s *fallback* clause
+  ("if a table must remain, wrap it in `overflow-x-auto`"), not its first
+  one. `MyScheduleTable` is now the only table that does the collapse
+  (cards below `sm`, table from `sm` up) because six columns is too many for
+  a phone and this is the view a teacher is most likely to check on one.
+  Sanity-check it in the browser, and decide whether to roll the same
+  treatment back into the Dean tables or not.
+- **The teacher's table is grouped by day pattern, one line per class (spec
+  11 asked for "sort rows by day then start time"; corrected mid-unit)**: the
+  first pass was one row per session in day order, which split a Mon/Wed class
+  across two lines — the day-pair label existed on every row
+  (`dayPattern` is an engine output, spec "Algorithm Chooses the Day
+  Pattern") and the user asked for it to be grouped instead. It is now one
+  `<section>` per pattern (MW, then TTh, an empty pattern omitted) with a
+  subject's linked pair collapsed to a single line, matching how the Dean
+  table already collapses a clean pair. Two consequences left to eyeball: the
+  **Day column now repeats the section heading** on every row (kept, because
+  the spec's column list asks for it and it keeps a row self-describing, but
+  the Dean table deliberately omits columns that repeat their group — worth a
+  look before this becomes convention), and a teacher who teaches on one pair
+  only sees one heading.
+- **The hook returns `sessions`, not `data` (spec 11 asked for
+  `{ data, isLoading, isEmpty, error }`)**: the spec tied `data` to "the
+  established convention in `code-standards.md`", but the repo's convention is
+  a semantic field name (`useAvailability` → `blockedSlots`, `useSchedule` →
+  `groups`/`activeGroup`, `useRooms` → `rooms`). `sessions` matches the
+  component's prop and the `schedules` vocabulary. Same for the hook not
+  reading the Clerk user id on the client: the spec allowed "the project's
+  existing auth hook pattern", and `availability.getMine` resolves the
+  teacher from `ctx.auth.getUserIdentity()` server-side. That is strictly
+  safer than `useUser()` + an argument — the client never holds an id it
+  could tamper with — and it means the hook has no auth code at all.
+- **Dev data can't show this view's empty state or its isolation by eye**:
+  all 8 generated rows belong to one teacher (Zyneer Moreno), so a login as
+  any other teacher shows the empty state and there is no second teacher's
+  class to be tempted to leak. The `by_teacherId` filter itself was verified
+  against dev with a synthetic identity (a different teacher id → `[]`), but
+  a real second teacher's subject + a regenerate is what the browser check
+  needs.
 - The antd/shadcn split: existing dashboard components
   (`DeanDashboard`, `TeacherDashboard`, `AppHeader`, root antd
   `ConfigProvider`) still use antd, while new UI (DeanSidebar, Subject
@@ -1067,6 +1231,47 @@ loading/error/saving states and that Cancel discards unsaved edits.
 
 ## Architecture Decisions
 
+- **The teacher's schedule is filtered on the server from the verified
+  identity, not from a client-supplied id (spec 11)**: `schedule.listMine`
+  takes no arguments and reads the `by_teacherId` index with
+  `identity.subject`. A "read my rows" query that accepts a teacher id would
+  be an authorization hole (any signed-in teacher could pass someone else's
+  id and read their week), and it would put a user id in client state that
+  has to stay in sync with the session. This is the same pattern as
+  `availability.getMine`, and it satisfies Invariant 3 by construction. The
+  hook therefore has **no Clerk code** — there is nothing to read.
+  Non-teachers (including Deans, who use `listAll`) get the empty Result
+  union rather than a throw, matching `rooms.listAll`.
+- **Week order lives in one shared helper (`lib/schedule.ts`), not in each
+  hook (spec 11)**: the day → start-time → subject-name comparator was lifted
+  out of `useSchedule` when `useMySchedule` needed the identical ordering, so
+  the Dean and Teacher views cannot drift apart on what "in order" means. It
+  sorts a copy, because the Convex query result must not be mutated.
+- **The generated row is the read model for both roles (spec 11)**: the
+  teacher view needed Subject, Course, Year, Room, Day, and Time, and all of
+  it is already denormalized onto `schedules` at generation time — so the
+  teacher hook filters and sorts and nothing else, and the table component
+  does no joining. The cost is the snapshot semantics already recorded above
+  (renaming a Room doesn't rewrite a generated week); the benefit is that no
+  read query re-joins Subjects/Courses/Rooms per render, and a teacher's
+  view can't disagree with the Dean's about the same class.
+- **A teacher's week is grouped by day pattern, and a linked pair is one row
+  (spec 11)**: `groupSessionsByDayPattern` (`lib/schedule.ts`) buckets the
+  teacher's sessions by the `dayPattern` the algorithm chose — MW first, then
+  TTh, empty patterns omitted — and collapses a subject's two sessions into
+  one row when they share a time and room. The pattern is an *engine output*
+  (there is no Dean input to disagree with), so grouping by it states the
+  real shape of the week instead of implying a Mon→Sat grid; a pair that
+  doesn't match falls back to per-session rows so the UI can never show a
+  shared time for two classes that don't share one. This mirrors the Dean
+  table's pair-collapsing, so both roles read a subject's two meetings the
+  same way. The logic lives in `lib/`, not the hook, because it is pure and
+  testable without React or Convex.
+- **The teacher schedule is read-only, with no action on the empty state
+  (spec 11)**: editing a schedule is Dean-only (`architecture.md`'s access
+  model, and manual editing is Out of Scope in `project-overview.md`), so the
+  page renders no buttons at all. The `EmptyState` names the Dean instead of
+  offering a "Generate Schedule" action the teacher cannot perform.
 - **Fitness is a penalty total, so lower is better and 0 is perfect** (spec
   10). A schedule that violates no soft constraint scores 0 and a worse
   schedule scores higher, which matches how the constraints are phrased ("more
@@ -1459,6 +1664,35 @@ loading/error/saving states and that Cancel discards unsaved edits.
     would be luck-dependent — remember to re-run the smoke test a few times
     after any change to the population/iteration defaults or the mutation
     rates before trusting a green run.
+- Spec: `context/spec/11-teacher-sched-view.md` (Teacher "My Schedule" — the
+  real read-only view replacing the placeholder) — the fourth spec in a row
+  with the same shape of surprise (08's calendar, 09's drag-and-drop, 10's
+  `runGA` API, now 11's fonts + "existing" card-table convention), and the
+  shape is now predictable enough to state: **check the spec's assumptions
+  about existing code against the repo first.** What it got right: the
+  `schedules.by_teacherId` index existed and unused, waiting for this page.
+  What it got wrong: Roboto/Montserrat (app is Geist), an "existing
+  convention" of card-collapsed tables (no table had one), and a `data` hook
+  field (repo uses semantic names). Its "join in the hook if not
+  denormalized" clause was moot — spec 08 had already denormalized
+  course/year/room onto every row. Its "sort rows by day then start time"
+  was also wrong for this view: `dayPattern` is an engine output, so the
+  week's real shape is Mon/Wed vs Tue/Thu, and the user asked for the days
+  grouped rather than split — corrected mid-unit (see Open Questions).
+- Unit: Teacher "My Schedule" page (spec 11) — see Completed. Functions
+  pushed to `dev:astute-akita-425` with `npx convex dev --once`; no schema
+  change, so no migration window.
+  - **`npx convex run --identity '<json>'` exists in this CLI** and is the
+    cheapest way to verify a role/ownership-gated query without a browser
+    session: `--identity
+    '{"subject":"user_…","metadata":{"role":"teacher"}}'` makes the function
+    see that identity. It proved `schedule.listMine` returns 8 rows for the
+    real teacher id, `[]` for a different teacher id, `[]` for a Dean, and
+    `{ ok: true, data: [] }` anonymous. Worth remembering for
+    `availability.getMine` and any future teacher-scoped query.
+  - **PowerShell 5.1**: the identity JSON needs its inner double quotes
+    backslash-escaped (`'{\"subject\":\"user_…\"}'`), the same stripping
+    caveat as `--inline-query` above.
 - PowerShell 5.1 caveat: to pass double quotes through `npx convex run
   --inline-query`, write the inner strings with doubled single quotes
   (`query(''rooms'')`), since PS otherwise strips `"` from native args.
