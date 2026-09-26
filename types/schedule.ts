@@ -1,9 +1,14 @@
+import type { SubjectYearLevel } from "@/types/course";
 import type { RoomType } from "@/types/rooms";
 
 export interface ScheduleSession {
   _id: string;
   subjectId: string;
   subjectName: string;
+  courseId: string;
+  courseCode: string;
+  courseName: string;
+  year: SubjectYearLevel;
   teacherId: string;
   teacherName: string;
   roomId: string;
@@ -15,6 +20,22 @@ export interface ScheduleSession {
   endMinutes: number;
   createdAt: number;
   updatedAt: number;
+}
+
+/**
+ * One Course + Year bucket of the generated schedule, e.g. "BSCS – 1st
+ * Year". A group exists as soon as a subject is assigned to that course/year
+ * pair, so `sessions` can legitimately be empty (nothing generated yet).
+ */
+export interface GroupedSchedule {
+  key: string;
+  courseId: string;
+  courseCode: string;
+  courseName: string;
+  year: SubjectYearLevel;
+  label: string;
+  subjectCount: number;
+  sessions: ScheduleSession[];
 }
 
 export type InfeasibilityCause =

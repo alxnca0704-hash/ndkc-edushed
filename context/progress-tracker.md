@@ -5,20 +5,111 @@ change.
 
 ## Current Phase
 
-Complete — Course Management + Course & Year Assignment on Subjects
-(spec 07). A Course is now a top-level Dean entity at `/dean/courses`, a
-Subject requires a `courseId` + `year` (1–4), and both are surfaced in the
-subject form/table. Course/Year are descriptive only — the scheduler is
-untouched.
+Complete — Group Generated Schedule by Course & Year (spec 08). Each
+generated `schedules` row now snapshots the subject's course + year, and
+`/dean/schedule` presents the timetable one Course + Year group at a time
+via a Course & year selector instead of one flat combined table. The
+scheduling engine is untouched (still one global CSP pass over all
+subjects).
 
 ## Current Goal
 
-Shipped (see Completed). Remaining follow-ups for this unit: eyeball
-`/dean/courses` and the subject form's new Course/Year selects in the browser
-with a real Dean login, and decide the Course/Year scheduling question
-recorded in Open Questions.
+Shipped (see Completed). Remaining follow-up for this unit: eyeball
+`/dean/schedule` in the browser with a real Dean login — switch between
+every Course + Year group, confirm each view shows only that group's
+sessions, and confirm a group with subjects but no classes renders the
+shared `EmptyState`.
 
 ## Completed
+
+- **Group Generated Schedule by Course & Year (spec 08)** — full unit:
+  - `convex/schema.ts`: `schedules` gains required `courseId`
+    (`v.id("courses")`), `courseCode`, `courseName`, and `year`
+    (`1 | 2 | 3 | 4`) — the same course/year the subject belongs to,
+    denormalized at generation time exactly like the subject/teacher/room
+    names already on the row. No new index (the Dean page still reads the
+    whole table and groups client-side).
+  - `convex/schedule.ts`: `sessionValidator` takes the four new fields;
+    `SubjectRow` mirrors the `courseId`/`courseCode`/`courseName`/`year`
+    that `subjects.listAll` already joins, and each placed session writes
+    them through. The placement map now throws if a placed subject is
+    missing from the input instead of writing a row with an empty course
+    reference (unreachable in practice — the CSP only places subjects it
+    was handed — but it keeps the row valid rather than defaulting).
+  - `convex/migrations.ts`: idempotent `backfillScheduleCourseAndYear`
+    copies each legacy row's course/year from its subject (and the real
+    `code`/`name` from `courses`), skipping rows that already carry the
+    fields and reporting `{ backfilled, skipped, needsRegenerate }`.
+  - Migration ran through the standard **relax → migrate → strict** window
+    against dev (`astute-akita-425`): the four columns were pushed as
+    `v.optional` via `npx convex dev --once`,
+    `npx convex run 'migrations:backfillScheduleCourseAndYear'` backfilled
+    **6** rows (OS 101 → BSCS/3, SE 101 → BSCS/4, HCI 101 → BSIT/2 —
+    matching the live subject docs) with `skipped: 0`, a second run
+    reported `backfilled: 0`, then the required columns were pushed
+    again. Verified with `npx convex data schedules` / `npx convex data
+    subjects` that every row's course/year matches its subject.
+  - `types/schedule.ts`: `ScheduleSession` gains `courseId`, `courseCode`,
+    `courseName`, `year`; new `GroupedSchedule` (`key`, `courseId`,
+    `courseCode`, `courseName`, `year`, `label` ("BSCS – 1st Year"),
+    `subjectCount`, `sessions`).
+  - `hooks/useSchedule.ts` — still one hook for the page, now also
+    subscribing to `api.subjects.listAll` (the same way `useSubjects`
+    already reads `rooms.listAll` / `courses.listAll` for its form) and
+    deriving `groups: GroupedSchedule[]`:
+    - bucket key is `` `${courseId}-${year}` ``, label comes from the
+      shared `SUBJECT_YEAR_LEVEL_LABELS` ("1st Year"), groups sort by
+      course name then year;
+    - **subjects seed the buckets, sessions fill them** — every Course +
+      Year that has a subject is selectable even before anything is
+      generated (and its `subjectCount` powers the empty state), while a
+      session is grouped by the course/year snapshot on its own row, so a
+      stale row can still surface its original group;
+    - the hook owns the transient selection (`selectGroup`) and resolves
+      `activeGroup` at render time (no effect): a key that no longer
+      exists falls back to the first group, so regenerating or deleting
+      subjects can never leave the page pointing at a missing bucket;
+    - `isLoading`/`error` now cover both queries; `isEmpty` means "no
+      groups at all" (no subjects and no sessions).
+  - `components/schedule/ScheduleGroupSelector.tsx` (new): shadcn
+    `Select` with a `SelectGroup` + `SelectLabel` per course
+    ("BSCS · BS Computer Science") and one item per year
+    ("1st Year · 4 classes"); the trigger shows the active group's
+    `label`. Renders `null` when there are no groups. **A `Select`, not
+    `Tabs`** — group count is `courses × 4 years` with courses
+    Dean-managed and unbounded, so a select scales and can't overflow
+    horizontally on mobile; no new shadcn primitive was needed.
+  - `components/schedule/ScheduleGroupSelectorSkeleton.tsx` (new):
+    label + trigger shaped `Skeleton`s for the loading state.
+  - `components/schedule/SchedulePage.tsx`: selector (or its skeleton)
+    above the content with the Generate button, a summary line
+    ("6 classes scheduled this week for BSCS – 1st Year."), and
+    `renderContent` extended with a per-group branch — a selected group
+    with zero sessions renders the shared `EmptyState`
+    (CalendarClock, "No classes for BSCS – 1st Year yet" + subject count +
+    Generate) instead of an empty table; the table itself now receives
+    only the active group's sessions. Loading/error/generate-error paths
+    are unchanged.
+  - `ScheduleTable` / `ScheduleTableSkeleton` untouched: inside one group
+    the course + year is the same on every row, so new columns would be
+    noise (the group is named in the selector and the summary line).
+  - Verified: root `npx tsc --noEmit` clean, `npm run lint` (0 errors —
+    the same 5 pre-existing warnings in `convex/_generated/*` +
+    `convex/auth.config.ts`), `npm run build` passes with `/dean/schedule`
+    routed, `npx tsx scripts/scheduling-smoke-test.ts` still 39/39 (the
+    engine was not touched), and against dev: unauthenticated
+    `schedule:listAll` / `subjects:listAll` return
+    `{ ok: true, data: [] }` while `schedule:generate` throws
+    `Unauthorized`.
+  - The **write** path got a live end-to-end check: a real Dean generate ran
+    from the app during the session and `npx convex data schedules` shows
+    all 8 regenerated rows carrying the correct `courseCode`/`courseId`/
+    `courseName`/`year` (CC 106 → BSIT/1, HCI 101 → BSIT/2, OS 101 →
+    BSCS/3, SE 101 → BSCS/4 — each matching its subject doc), and
+    re-running the migration on the new rows reports `backfilled: 0`. So
+    dev currently yields 4 groups, 2 classes each.
+  - Not verified in a browser by me (no Dean session here) — the selector
+    UI itself has not been eyeballed, see Next Up.
 
 - **Course Management + Course & Year on Subjects (spec 07)** — full unit:
   - `convex/schema.ts`: new `courses` table (`name`, `code`,
@@ -603,35 +694,73 @@ recorded in Open Questions.
 
 ## In Progress
 
-- None. Spec 07 (Course Management + subject Course/Year) is complete and
-  pushed to dev; the scheduling engine is unchanged (CSP wired, GA still not).
+- None. Spec 08 (Course + Year grouped schedule) is complete and pushed to
+  dev; the scheduling engine is unchanged (CSP wired, GA still not).
 
 ## Next Up
 
-1. Sanity-check spec 07 in the browser with a real Dean login: add/edit/
+1. Sanity-check spec 08 in the browser with a real Dean login: switch
+   through every Course + Year group in the `/dean/schedule` selector,
+   confirm each view shows only that group's sessions, and confirm a
+   group with subjects but no placed classes renders the shared
+   `EmptyState`. The selector's grouped `Select` (per-course group
+   labels, per-year class counts) has not been eyeballed — group labels
+   and mobile layout especially.
+2. Sanity-check spec 07 in the browser with a real Dean login: add/edit/
    delete a Course at `/dean/courses`, create a Subject with the new
    Course/Year selects (and confirm submit is blocked without them), and
    read the Course/Year columns in the subjects table. Lint/build/smoke are
    green and the dev data is migrated, but the UI has not been eyeballed.
-2. Teacher My Schedule view (real, read-only, not placeholder) — consumes
+3. Teacher My Schedule view (real, read-only, not placeholder) — consumes
    the generated `schedules` rows filtered by teacher id
-3. Dean schedule view polish / student-facing schedule (out of scope until
+4. Dean schedule view polish / student-facing schedule (out of scope until
    confirmed in specs)
-4. (Optional, later) Wire `runGA` into the `generate` action once soft
+5. (Optional, later) Wire `runGA` into the `generate` action once soft
    constraints come in scope — `convex/scheduling/ga.ts` is already built,
    standalone-tested (pair-atom chromosomes), and left with a clear call
    site
-5. Sanity-check the 2-column availability grid in the browser (real teacher
+6. Sanity-check the 2-column availability grid in the browser (real teacher
    login): red blocked cells, save/reset round-trip, tooltip labels — the
    pattern keys and grid are covered by lint/build/smoke, but the visual/UX
    hasn't been eyeballed
-6. Sanity-check the `ScheduleGenerationError` accordion in the browser
+7. Sanity-check the `ScheduleGenerationError` accordion in the browser
    (real Dean, school-hours blocks) — the engine diagnostics and the UI
    state machine are verified by the smoke test + build, but a live generate
    failure hasn't been eyeballed.
 
 ## Open Questions
 
+- **Cross-group conflict scope (asked by spec 08, answered — confirm it's
+  the intent)**: the Dean schedule is now *displayed* one Course + Year at a
+  time, but generation is still **one global pass over every subject in the
+  week**, so teacher and room conflicts are checked across all courses
+  (`runCSP` receives all subjects at once; `validateSolution` re-checks the
+  whole solution). Grouping is a view filter only — it can never hide a
+  conflict, and the UI still doesn't validate anything client-side
+  (Invariant 5). If a future per-course-year regenerate ("just rebuild
+  BSCS year 2") is ever wanted, that **would** need a decision: it either
+  re-runs the CSP scoped to one group (and must re-check the other groups'
+  fixed rows for teacher/room clashes) or accepts cross-course conflicts.
+  Nothing in the current UI implies that, so it stays out of scope.
+- **No calendar / drag-and-drop / color legend exists** (spec 08 assumed
+  them): there is no `components/schedule/ScheduleCalendar.tsx`, no
+  drag-and-drop or auto-rescheduling code, and no per-teacher color legend
+  anywhere in the repo. Commit `d4be6ef` ("feat: implement draggable
+  calendar…") only added spec prose to
+  `context/spec/07-design-adjust-dean-scheduler.md` — no code. Manual
+  drag-and-drop editing is also explicitly **Out of Scope** in
+  `project-overview.md`, and the schedule view is read-only by design. So
+  spec 08's calendar/legend/drag-conflict bullets were N/A; the existing
+  read-only `ScheduleTable` is what got grouped. If the draggable calendar
+  is actually wanted, it needs its own spec and an explicit decision to move
+  it into scope (it would also mean client-side conflict validation, which
+  Invariant 5 currently forbids).
+- **A session's group comes from the generation-time snapshot**: if a Dean
+  moves a subject to a different course/year (or renames the course) after
+  generating, the already-generated class keeps its original group until the
+  next regenerate — the new group then appears with `subjectCount: 1` and no
+  sessions. This is the existing atomic-snapshot semantics applied to
+  course/year, not new drift; regenerate to refresh.
 - ~~The exact availability time blocks were not defined in
   `project-overview.md` / `architecture.md`.~~ Resolved by spec 05 and the
   school-hours unit: the generator consumes the Mon–Sat × 12 × 1-hour grid
@@ -641,24 +770,27 @@ recorded in Open Questions.
   slots). If non-aligned durations or half-hour slots are ever wanted, the
   grid and the CSP must change together.
 - Generated schedules are an atomic snapshot: each `schedules` row
-  denormalizes subject/teacher/room names at generation time, so editing a
-  Subject's name or a Room's name does not rewrite an already-generated
-  timetable (it will be refreshed next regenerate). Confirm this snapshot
-  semantics is what we want, or join names live and drop the denormalized
-  fields.
+  denormalizes subject/teacher/room names **and the subject's course +
+  year** at generation time (spec 08), so editing a Subject's name, a
+  Room's name, or a Subject's course/year does not rewrite an
+  already-generated timetable (it will be refreshed next regenerate).
+  Confirm this snapshot semantics is what we want, or join names/course
+  live and drop the denormalized fields.
 - Each Subject carries a single fixed `roomId` (spec 03 data model), so
   "room type matches subject" reduces to scheduling in the Dean-chosen
   room. If a subject should instead be placeable in *any* room of a type,
   the schema would expose `roomType` on the subject and the CSP's room
   candidates would widen — decide before extending the scheduler.
-- Dev seed data only has lab rooms (IT Lab 1–3) and three subjects
-  (SE 101 → IT Lab 1 180 min, HCI 101 → IT Lab 2 120 min, OS 101 → IT Lab 3
-  180 min; one teacher, availability unset) with no `dayPattern` on the
-  subject. Generating over the empty availability set works and yields 6
-  linked sessions, all landing on MW by default
-  (matches the backfilled schedule rows), with no teacher double-books
-  (verified) — but a typical timetable needs the Dean to add lecture
-  rooms/subjects and teachers to set availability first.
+- Dev data is still thin: only lab rooms (IT Lab 1–3) and a handful of
+  subjects for one teacher (Zyneer Moreno) with availability unset —
+  currently CC 106 (BSIT/1, IT Lab 2, 180 min), HCI 101 (BSIT/2, IT Lab 2,
+  120 min), OS 101 (BSCS/3, IT Lab 3, 180 min), SE 101 (BSCS/4, IT Lab 1,
+  180 min). Generating over the empty availability set works and yields 8
+  linked sessions with no teacher double-books (verified, and re-verified
+  after spec 08's course/year snapshot) — but a typical timetable needs the
+  Dean to add lecture rooms/subjects and teachers to set availability
+  first. Note there is no lecture room in dev at all, so every class is a
+  lab.
 - **Day patterns beyond MW/TTh**: today a subject must meet twice on a
   contiguous Mon-Wed or Tue-Thu pair. The user's example key was `TTH`
   (reconciled to `TTh` to match the required union `"MW" | "TTh"`). Later
@@ -740,8 +872,39 @@ recorded in Open Questions.
 
 ## Architecture Decisions
 
-- **Course is a top-level entity; `subjects.courseId` + `subjects.year` are
-  organizational only** (spec 07). A Course is just `name` + `code`
+- **The Dean schedule is grouped by Course + Year in the UI only**
+  (spec 08). `schedules` rows carry the subject's `courseId`/`courseCode`/
+  `courseName`/`year` as a generation-time snapshot (consistent with the
+  subject/teacher/room names already denormalized there), and
+  `useSchedule` buckets them by `` `${courseId}-${year}` `` — the page
+  never re-joins Subject data per render, and the engine still sees every
+  subject at once, so teacher/room conflict detection stays global.
+  Group existence is driven by **subjects** (a course/year with subjects is
+  selectable before anything is generated, which is what makes the shared
+  `EmptyState` reachable), session assignment by the **snapshot** on each
+  row; the union of the two is what the selector lists.
+- **The course+year selector is a shadcn `Select`, not `Tabs`**: the group
+  count is `courses × 4 year levels` and courses are Dean-managed with no
+  upper bound, so tabs would wrap/overflow (especially on mobile). The
+  select groups its items per course via `SelectGroup`/`SelectLabel` and
+  shows a per-year class count, reusing an already-vendored primitive
+  (`ai-workflow-rules.md`: install a primitive as its own step, reuse before
+  creating).
+- **Transient selection state lives in the hook, not the component**: the
+  page's Course + Year selection joins the other derived page state
+  (`isEmpty`, the active group) in `useSchedule`, and `activeGroup` is
+  resolved during render rather than in an effect — a stale key silently
+  falls back to the first group (and the repo's lint config rejects
+  `setState`-in-effect). The search filter in `SubjectManagement` stays
+  component-local; this one needs the fallback logic, so it lives in the
+  hook.
+- The schedule table collapses a clean pair into one row per subject with a
+  "Schedule Pattern" badge + human label; a non-clean pair (shouldn't
+  happen via `generate`) falls back to per-session rows. Within a
+  Course + Year group the course/year is constant, so the table adds no
+  Course/Year columns — the group is named by the selector + summary line.
+
+- **Course is a top-level entity; `subjects.courseId` + `subjects.year` are  organizational only** (spec 07). A Course is just `name` + `code`
   (Dean-managed, code unique/uppercased) with a `by_code` index; a Subject
   points at exactly one course and one year level (1–4). The CSP
   deliberately does **not** read either field, so overlapping subjects from
@@ -879,7 +1042,8 @@ recorded in Open Questions.
   expressed directly in `convex/schema.ts` (make the changed columns
   optional, push, migrate, then finalize and push again). This unit ran
   `seedCourses` (2 courses) and `backfillSubjectCourseAndYear` (3 subjects)
-  inside that window; earlier units ran
+  inside that window; spec 08 ran `backfillScheduleCourseAndYear` (6
+  schedule rows) in its own window; earlier units ran
   `backfillSubjectRemoveDayPattern` (3 subjects, since superseded),
   `backfillScheduleDayPatterns` (6 schedule rows),
   `backfillSubjectDayPatterns` (3 docs, since removed) and
@@ -909,6 +1073,18 @@ recorded in Open Questions.
 - Spec: `context/spec/07-design-adjust-dean-scheduler.md` (Course CRUD +
   subject `courseId`/`year`) — added in `d4be6ef`, revised in `11e55ee`;
   both commits touched only this spec file, no code.
+- Spec: `context/spec/08-design-generated-schedule-dean.md` (group the
+  generated schedule by Course + Year on `/dean/schedule`) — the spec's
+  "Before finishing" bullets assume a draggable `ScheduleCalendar.tsx`, a
+  per-teacher color legend, and existing drag/auto-reschedule logic. **None
+  of that exists in code**: `d4be6ef` only appended spec prose to spec 07,
+  there is no calendar component, and manual drag-and-drop editing is listed
+  Out of Scope in `project-overview.md` (the schedule view is read-only).
+  Verified with `git show --stat d4be6ef` (1 file, spec markdown only) and
+  by listing the repo — so the calendar/legend/conflict-on-drag bullets were
+  N/A and the read-only `ScheduleTable` is what got grouped. Answered the
+  spec's real question in Open Questions: conflict checking stays global
+  because generation is one CSP pass over all subjects.
 - Unit: Fixed Day-Pair Scheduling (MW / TTh) — extended spec 05's engine
   from `meetingsPerWeek` to linked `dayPattern` pairs (see Completed)
 - Unit: Teacher Availability by Day-Pair (MW / TTh) — spec 06; ran
@@ -938,6 +1114,16 @@ recorded in Open Questions.
   they now filter those docs out (a `db.replace` under a strict schema must
   carry every required field — worth re-checking whenever a new required
   subject field is added).
+- Unit: Group Generated Schedule by Course & Year (spec 08) — see Completed.
+  Same relax→migrate→strict window against dev: `courseId`/`courseCode`/
+  `courseName`/`year` pushed as `v.optional`, then `npx convex run
+  'migrations:backfillScheduleCourseAndYear'` (backfilled 6 rows, skipped 0 —
+  it reads the real `code`/`name` from `courses`, not a placeholder), then
+  required columns pushed with `npx convex dev --once`; a second run reports
+  `backfilled: 0`. Note: the local `convex/_generated/dataModel.d.ts`
+  imports `../schema.js` directly, so schema shape changes need no codegen
+  diff — the optional→required flip was enforced by the push itself, not by
+  a generated file.
 - PowerShell 5.1 caveat: to pass double quotes through `npx convex run
   --inline-query`, write the inner strings with doubled single quotes
   (`query(''rooms'')`), since PS otherwise strips `"` from native args.

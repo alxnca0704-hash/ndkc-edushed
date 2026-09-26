@@ -42,6 +42,10 @@ export default defineSchema({
   schedules: defineTable({
     subjectId: v.id("subjects"),
     subjectName: v.string(),
+    courseId: v.id("courses"),
+    courseCode: v.string(),
+    courseName: v.string(),
+    year: v.union(v.literal(1), v.literal(2), v.literal(3), v.literal(4)),
     teacherId: v.string(),
     teacherName: v.string(),
     roomId: v.id("rooms"),

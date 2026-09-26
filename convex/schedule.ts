@@ -17,9 +17,20 @@ import type {
   SchedulingInput,
 } from "./scheduling/types";
 
+const yearValidator = v.union(
+  v.literal(1),
+  v.literal(2),
+  v.literal(3),
+  v.literal(4),
+);
+
 const sessionValidator = v.object({
   subjectId: v.id("subjects"),
   subjectName: v.string(),
+  courseId: v.id("courses"),
+  courseCode: v.string(),
+  courseName: v.string(),
+  year: yearValidator,
   teacherId: v.string(),
   teacherName: v.string(),
   roomId: v.id("rooms"),
@@ -130,6 +141,10 @@ interface SubjectRow {
   roomType: "lecture" | "lab";
   teacherName: string;
   durationMinutes: number;
+  courseId: string;
+  courseCode: string;
+  courseName: string;
+  year: 1 | 2 | 3 | 4;
 }
 
 interface RoomRow {
@@ -257,11 +272,25 @@ export const generate = action({
     const sessions = result.solution.map((placement) => {
       const subject = subjectById.get(placement.subjectId);
       const room = roomById.get(placement.roomId);
+
+      // Every placement comes from the subject rows the CSP was given, so a
+      // miss means the input changed mid-run. Fail loudly instead of writing a
+      // row with an empty course reference.
+      if (!subject) {
+        throw new Error(
+          "A scheduled subject is missing from the scheduling input",
+        );
+      }
+
       return {
         subjectId: placement.subjectId as Id<"subjects">,
-        subjectName: subject?.name ?? "Unknown",
+        subjectName: subject.name,
+        courseId: subject.courseId as Id<"courses">,
+        courseCode: subject.courseCode,
+        courseName: subject.courseName,
+        year: subject.year,
         teacherId: placement.teacherId,
-        teacherName: subject?.teacherName ?? "Unknown",
+        teacherName: subject.teacherName,
         roomId: placement.roomId as Id<"rooms">,
         roomName: room?.name ?? "Unknown",
         roomType: room?.type ?? "lecture",

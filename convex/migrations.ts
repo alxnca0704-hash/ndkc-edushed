@@ -233,6 +233,69 @@ export const backfillAvailabilityDayPairs = internalMutation({
 });
 
 /**
+ * The Dean schedule is grouped by Course + Year, so every generated session
+ * now snapshots the course it belongs to alongside the subject/teacher/room
+ * names it already denormalizes. Rows generated before this change are
+ * rewritten from their subject. Idempotent: rows that already carry
+ * `courseId` are left untouched, so a second run reports 0.
+ */
+export const backfillScheduleCourseAndYear = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const sessions = await ctx.db.query("schedules").collect();
+    const legacySessions = sessions.filter(
+      (session) =>
+        !session.courseId ||
+        !session.courseCode ||
+        !session.courseName ||
+        !session.year,
+    );
+
+    if (legacySessions.length === 0) {
+      return { backfilled: 0 };
+    }
+
+    const subjectById = new Map(
+      (await ctx.db.query("subjects").collect()).map((subject) => [
+        subject._id,
+        subject,
+      ]),
+    );
+    const courseById = new Map(
+      (await ctx.db.query("courses").collect()).map((course) => [
+        course._id,
+        course,
+      ]),
+    );
+
+    let backfilled = 0;
+    let skipped = 0;
+
+    for (const session of legacySessions) {
+      const subject = subjectById.get(session.subjectId);
+
+      if (!subject) {
+        skipped += 1;
+        continue;
+      }
+
+      const course = courseById.get(subject.courseId);
+
+      await ctx.db.patch(session._id, {
+        courseId: subject.courseId,
+        courseCode: course?.code ?? "—",
+        courseName: course?.name ?? "—",
+        year: subject.year,
+        updatedAt: Date.now(),
+      });
+      backfilled += 1;
+    }
+
+    return { backfilled, skipped, needsRegenerate: skipped > 0 };
+  },
+});
+
+/**
  * Seeds the two prototype programs (BSCS, BSIT) so a fresh setup has courses
  * to assign subjects to. Idempotent: a course whose code already exists is
  * left alone, so a second run reports 0 seeded.

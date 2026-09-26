@@ -1,9 +1,11 @@
 "use client";
 
-import { Loader2, WandSparkles } from "lucide-react";
+import { CalendarClock, Loader2, WandSparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { ScheduleGenerationError } from "@/components/schedule/ScheduleGenerationError";
+import { ScheduleGroupSelector } from "@/components/schedule/ScheduleGroupSelector";
+import { ScheduleGroupSelectorSkeleton } from "@/components/schedule/ScheduleGroupSelectorSkeleton";
 import { ScheduleTable } from "@/components/schedule/ScheduleTable";
 import { ScheduleTableSkeleton } from "@/components/schedule/ScheduleTableSkeleton";
 import { EmptyState } from "@/components/shared/EmptyState";
@@ -13,7 +15,10 @@ import { useSchedule } from "@/hooks/useSchedule";
 
 export function SchedulePage() {
   const {
-    sessions,
+    groups,
+    activeKey,
+    activeGroup,
+    selectGroup,
     isLoading,
     isEmpty,
     error,
@@ -39,6 +44,8 @@ export function SchedulePage() {
       toast.error("Couldn't generate a schedule");
     }
   }
+
+  const activeSessions = activeGroup?.sessions ?? [];
 
   const renderContent = () => {
     if (isLoading) {
@@ -91,8 +98,35 @@ export function SchedulePage() {
       );
     }
 
-    return <ScheduleTable sessions={sessions} />;
+    if (activeSessions.length === 0) {
+      const subjectCount = activeGroup?.subjectCount ?? 0;
+      return (
+        <EmptyState
+          icon={CalendarClock}
+          title={`No classes for ${activeGroup?.label ?? "this course and year"} yet`}
+          description={`${subjectCount} ${
+            subjectCount === 1 ? "subject has" : "subjects have"
+          } no classes in the generated schedule. Generate the schedule to place them.`}
+          action={
+            <Button onClick={handleGenerate} disabled={isGenerating}>
+              {isGenerating ? <Loader2 className="size-4 animate-spin" /> : null}
+              {isGenerating ? "Generating…" : "Generate Schedule"}
+            </Button>
+          }
+        />
+      );
+    }
+
+    return <ScheduleTable sessions={activeSessions} />;
   };
+
+  const summary = isLoading
+    ? "Loading the generated schedule…"
+    : isEmpty
+      ? "No subjects to schedule yet."
+      : `${activeSessions.length} ${
+          activeSessions.length === 1 ? "class" : "classes"
+        } scheduled this week for ${activeGroup?.label ?? "this course and year"}.`;
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
@@ -102,18 +136,20 @@ export function SchedulePage() {
         </h1>
         <p className="text-sm text-muted-foreground">
           Build a conflict-free timetable from rooms, subjects, and teacher
-          availability.
+          availability, grouped by course and year level.
         </p>
       </div>
 
-      <div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-muted-foreground">
-          {isEmpty
-            ? "No timetable has been generated."
-            : `${sessions.length} ${
-                sessions.length === 1 ? "class" : "classes"
-              } scheduled this week.`}
-        </p>
+      <div className="mt-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        {isLoading ? (
+          <ScheduleGroupSelectorSkeleton />
+        ) : (
+          <ScheduleGroupSelector
+            groups={groups}
+            value={activeKey}
+            onValueChange={selectGroup}
+          />
+        )}
         <Button onClick={handleGenerate} disabled={isGenerating}>
           {isGenerating ? (
             <Loader2 className="size-4 animate-spin" />
@@ -121,6 +157,8 @@ export function SchedulePage() {
           {isGenerating ? "Generating…" : "Generate Schedule"}
         </Button>
       </div>
+
+      <p className="mt-3 text-sm text-muted-foreground">{summary}</p>
 
       <div className="mt-4 overflow-hidden rounded-xl bg-white p-2 shadow-sm sm:p-4">
         {renderContent()}

@@ -20,7 +20,8 @@ This is a prototype scheduling application that helps a school Dean generate a c
 5. **Teacher:** logs in and marks unavailable days/times — saved to Convex, linked to their Clerk user ID
 6. **Dean:** clicks "Generate Schedule"
 7. System reads Rooms, Subjects, and Availability from Convex, runs the scheduling logic, and writes the resulting schedule back to Convex
-8. **Dean:** views the full generated schedule in a table/calendar, loaded live from Convex
+8. **Dean:** views the generated schedule in a table, loaded live from
+   Convex, switching between one course + year level at a time
 9. **Teacher:** views only their own assigned classes in a filtered, read-only schedule, loaded live from Convex
 
 ## Features
@@ -62,7 +63,11 @@ This is a prototype scheduling application that helps a school Dean generate a c
 ### Schedule Generation (Dean)
 
 - One-click action to generate a full timetable from current Rooms, Subjects, and Teacher availability
-- Displays the resulting schedule in a read-only table view
+- Displays the resulting schedule in a read-only table view, broken out by
+  course and year level — the Dean picks one Course + Year (e.g. "BSCS –
+  1st Year") and sees only that group's classes; generation itself is a
+  single pass over every subject, so conflicts are still checked across all
+  courses
 
 ### Availability (Teacher)
 
