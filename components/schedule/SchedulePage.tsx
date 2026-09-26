@@ -1,6 +1,7 @@
 "use client";
 
-import { CalendarClock, Loader2, WandSparkles } from "lucide-react";
+import { useState } from "react";
+import { CalendarClock, Loader2, SlidersHorizontal, WandSparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import { ScheduleGenerationError } from "@/components/schedule/ScheduleGenerationError";
@@ -8,10 +9,14 @@ import { ScheduleGroupSelector } from "@/components/schedule/ScheduleGroupSelect
 import { ScheduleGroupSelectorSkeleton } from "@/components/schedule/ScheduleGroupSelectorSkeleton";
 import { ScheduleTable } from "@/components/schedule/ScheduleTable";
 import { ScheduleTableSkeleton } from "@/components/schedule/ScheduleTableSkeleton";
+import { SoftConstraintSettings } from "@/components/schedule/SoftConstraintSettings";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { ErrorState } from "@/components/shared/ErrorState";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SOFT_CONSTRAINT_LABELS } from "@/constants/scheduleSettings";
 import { useSchedule } from "@/hooks/useSchedule";
+import { useScheduleSettings } from "@/hooks/useScheduleSettings";
 
 export function SchedulePage() {
   const {
@@ -25,8 +30,19 @@ export function SchedulePage() {
     isGenerating,
     generateError,
     infeasibleSubjects,
+    optimization,
     generate,
   } = useSchedule();
+
+  const {
+    settings,
+    isLoading: isSettingsLoading,
+    error: settingsError,
+    isSaving,
+    save: saveSettings,
+  } = useScheduleSettings();
+
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   function handleLoadErrorRetry() {
     window.location.reload();
@@ -36,9 +52,9 @@ export function SchedulePage() {
     const result = await generate();
     if (result.ok) {
       toast.success(
-        `Schedule generated — ${result.count} ${
-          result.count === 1 ? "class" : "classes"
-        } placed.`,
+        `Schedule ${result.optimization ? "generated and optimized" : "generated"} — ${
+          result.count
+        } ${result.count === 1 ? "class" : "classes"} placed.`,
       );
     } else {
       toast.error("Couldn't generate a schedule");
@@ -128,6 +144,25 @@ export function SchedulePage() {
           activeSessions.length === 1 ? "class" : "classes"
         } scheduled this week for ${activeGroup?.label ?? "this course and year"}.`;
 
+  // Only rendered when the GA actually ran — with every soft constraint off
+  // there is no score, and printing a 0 or a dash would imply one.
+  const optimizationLine = optimization ? (
+    <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+      <Badge variant="secondary" className="tabular-nums">
+        {optimization.fitness}
+      </Badge>
+      <span>
+        Optimization score — lower is better
+        {optimization.constraints.length > 0
+          ? `, weighted by ${optimization.constraints
+              .map((key) => SOFT_CONSTRAINT_LABELS[key])
+              .join(", ")}`
+          : ""}
+        .
+      </span>
+    </p>
+  ) : null;
+
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
       <div className="flex flex-col gap-1">
@@ -150,19 +185,43 @@ export function SchedulePage() {
             onValueChange={selectGroup}
           />
         )}
-        <Button onClick={handleGenerate} disabled={isGenerating}>
-          {isGenerating ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : null}
-          {isGenerating ? "Generating…" : "Generate Schedule"}
-        </Button>
+        <div className="flex items-center gap-2 sm:justify-end">
+          <Button
+            variant="outline"
+            onClick={() => setIsSettingsOpen(true)}
+            disabled={isGenerating}
+          >
+            <SlidersHorizontal />
+            Optimization
+          </Button>
+          <Button onClick={handleGenerate} disabled={isGenerating}>
+            {isGenerating ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : null}
+            {isGenerating ? "Generating…" : "Generate Schedule"}
+          </Button>
+        </div>
       </div>
 
-      <p className="mt-3 text-sm text-muted-foreground">{summary}</p>
+      <div className="mt-3 grid gap-1">
+        {optimizationLine}
+        <p className="text-sm text-muted-foreground">{summary}</p>
+      </div>
 
       <div className="mt-4 overflow-hidden rounded-xl bg-white p-2 shadow-sm sm:p-4">
         {renderContent()}
       </div>
+
+      {isSettingsOpen ? (
+        <SoftConstraintSettings
+          settings={settings}
+          isLoading={isSettingsLoading}
+          error={settingsError}
+          isSaving={isSaving}
+          onSave={saveSettings}
+          onClose={() => setIsSettingsOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

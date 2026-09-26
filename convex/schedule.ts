@@ -8,13 +8,24 @@ import {
   AVAILABILITY_TIME_SLOTS,
   parseAvailabilityPatternKey,
 } from "../constants/availability";
+import {
+  DEFAULT_SCHEDULE_SETTINGS,
+  SOFT_CONSTRAINT_KEYS,
+} from "../constants/scheduleSettings";
+import type {
+  OptimizationResult,
+  ScheduleSettings,
+  SoftConstraintKey,
+} from "../types/scheduleSettings";
 import { runCSP } from "./scheduling/csp";
+import { hasActiveConstraint, runGA } from "./scheduling/ga";
 import { validateSolution } from "./scheduling/validate";
 import { isDean } from "./roles";
 import type {
   InfeasibilityReason,
   SchedulingAvailability,
   SchedulingInput,
+  SoftConstraintWeights,
 } from "./scheduling/types";
 
 const yearValidator = v.union(
@@ -58,12 +69,49 @@ type AvailabilityQueryResult =
   | { ok: false; error: string };
 
 type GenerateActionResult =
-  | { ok: true; count: number }
+  | {
+      ok: true;
+      count: number;
+      /**
+       * `null` when the GA was skipped (no soft constraint enabled) — the
+       * schedule is then the raw CSP output and there is no score to show.
+       */
+      optimization: OptimizationResult | null;
+    }
   | {
       ok: false;
       error: string;
       infeasibleSubjects?: readonly InfeasibilityReason[];
     };
+
+type ScheduleSettingsResult =
+  | { ok: true; data: ScheduleSettings }
+  | { ok: false; error: string };
+
+/**
+ * A switched-off constraint contributes nothing to the fitness function, so it
+ * passes a weight of 0 rather than being omitted.
+ */
+function weightsFromSettings(
+  settings: ScheduleSettings,
+): SoftConstraintWeights {
+  const weights: SoftConstraintWeights = {
+    workloadBalance: 0,
+    daySpread: 0,
+    gapMinimization: 0,
+  };
+  for (const key of SOFT_CONSTRAINT_KEYS) {
+    const constraint = settings[key];
+    weights[key] = constraint.enabled ? constraint.weight : 0;
+  }
+  return weights;
+}
+
+function activeConstraintKeys(
+  weights: SoftConstraintWeights,
+): SoftConstraintKey[] {
+  return SOFT_CONSTRAINT_KEYS.filter((key) => weights[key] > 0);
+}
 
 export const listAvailability = internalQuery({
   args: {},
@@ -267,10 +315,43 @@ export const generate = action({
       };
     }
 
+    // Soft constraints are a best-effort refinement: if the settings record
+    // can't be read we generate exactly as before (no GA) rather than failing a
+    // generation that is otherwise perfectly good.
+    const settingsResult: ScheduleSettingsResult = await ctx.runQuery(
+      api.scheduleSettings.get,
+    );
+    const settings = settingsResult.ok
+      ? settingsResult.data
+      : DEFAULT_SCHEDULE_SETTINGS;
+    const weights = weightsFromSettings(settings);
+
+    let solution = result.solution;
+    let optimization: OptimizationResult | null = null;
+
+    // With every soft constraint off there is nothing to optimize, so the GA is
+    // skipped entirely rather than burning compute on an all-zero fitness.
+    if (hasActiveConstraint(weights)) {
+      const gaResult = runGA(input, result.solution, { weights });
+      const gaValidation = validateSolution(input, gaResult.schedule);
+      if (gaValidation.valid) {
+        solution = gaResult.schedule;
+        optimization = {
+          fitness: gaResult.fitness,
+          constraints: activeConstraintKeys(weights),
+        };
+      }
+      // A validation failure here is an engine bug, not a user error: the GA's
+      // operators are supposed to be validity-preserving and its best member
+      // starts as the CSP's own solution. The optimization is best effort, so
+      // fall back to the untouched CSP schedule and report no score rather than
+      // failing a generation that is otherwise perfectly good.
+    }
+
     const subjectById = new Map(subjectsResult.data.map((subject) => [subject._id, subject]));
     const roomById = new Map(roomsResult.data.map((room) => [room._id, room]));
 
-    const sessions = result.solution.map((placement) => {
+    const sessions = solution.map((placement) => {
       const subject = subjectById.get(placement.subjectId);
       const room = roomById.get(placement.roomId);
 
@@ -307,6 +388,6 @@ export const generate = action({
       { sessions },
     );
 
-    return { ok: true as const, count: saved };
+    return { ok: true as const, count: saved, optimization };
   },
 });

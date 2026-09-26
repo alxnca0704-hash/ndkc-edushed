@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is a prototype scheduling application that helps a school Dean generate a conflict-free class timetable automatically instead of building it by hand. The Dean enters the rooms available and the subjects that need to be scheduled (including how long and how often each meets, and who teaches it), while Teachers log in and set the times they are unavailable. Authentication is handled by Clerk, with Dean and Teacher accounts seeded manually ahead of time rather than through a public sign-up flow. Data (Rooms, Subjects, Availability, Schedules) is stored and synced in real time using Convex. A scheduling algorithm (Constraint Satisfaction, with Genetic Algorithm optimization planned for later) then assigns each subject a day, time, and room with no double-booked teachers or rooms.
+This is a prototype scheduling application that helps a school Dean generate a conflict-free class timetable automatically instead of building it by hand. The Dean enters the rooms available and the subjects that need to be scheduled (including how long and how often each meets, and who teaches it), while Teachers log in and set the times they are unavailable. Authentication is handled by Clerk, with Dean and Teacher accounts seeded manually ahead of time rather than through a public sign-up flow. Data (Rooms, Subjects, Availability, Schedules) is stored and synced in real time using Convex. A scheduling algorithm (Constraint Satisfaction) then assigns each subject a day, time, and room with no double-booked teachers or rooms, and — when the Dean has switched on any soft constraint — a Genetic Algorithm pass then polishes that schedule against those preferences, never breaking a hard rule.
 
 ## Goals
 
@@ -19,7 +19,7 @@ This is a prototype scheduling application that helps a school Dean generate a c
 4. **Dean:** adds Subjects (name, duration, assigned course + year level, assigned teacher + room — pulled from seeded Clerk teacher accounts, the courses table, and the rooms table) — saved to Convex
 5. **Teacher:** logs in and marks unavailable days/times — saved to Convex, linked to their Clerk user ID
 6. **Dean:** clicks "Generate Schedule"
-7. System reads Rooms, Subjects, and Availability from Convex, runs the scheduling logic, and writes the resulting schedule back to Convex
+7. System reads Rooms, Subjects, and Availability from Convex, runs the scheduling logic, optimizes the result against the Dean's soft-constraint preferences if any are enabled, and writes the resulting schedule back to Convex
 8. **Dean:** views the generated schedule in a table, loaded live from
    Convex, switching between one course + year level at a time
 9. **Teacher:** views only their own assigned classes in a filtered, read-only schedule, loaded live from Convex
@@ -69,6 +69,27 @@ This is a prototype scheduling application that helps a school Dean generate a c
   single pass over every subject, so conflicts are still checked across all
   courses
 
+### Schedule Optimization (Dean)
+
+- After a conflict-free schedule is produced, the scheduler runs a Genetic
+  Algorithm pass to improve it against **soft constraints** — preferences that
+  never break a hard rule, only make the timetable nicer
+- Three soft constraints, each independently switched on or off and weighted
+  0–10 by the Dean:
+  - **Balance Workload** — discourages stacking more than two classes on one
+    teacher's day
+  - **Spread Sessions Across Days** — spreads a teacher's classes over more of
+    the Mon–Thu week instead of cramming them into fewer days
+  - **Minimize Gaps** — discourages long idle stretches inside a teacher's day
+- Settings live in Convex as a single record, so the Dean's chosen weights are
+  remembered across sessions
+- With no soft constraint switched on, the GA is skipped entirely and the
+  plain conflict-free schedule is saved as-is
+- When the GA runs, the generated schedule shows an optimization score (lower
+  is better); the score is omitted entirely when the GA was skipped
+- The GA only ever outputs a schedule that passes every hard constraint — soft
+  preferences can never introduce a conflict
+
 ### Availability (Teacher)
 
 - Weekly grid where a logged-in teacher marks blocked (unavailable) time slots
@@ -92,6 +113,10 @@ This is a prototype scheduling application that helps a school Dean generate a c
 - Teacher-side availability input
 - Teacher-side personal schedule view
 - Generate Schedule action and schedule views for both roles
+- Schedule optimization: a GA pass over the generated schedule, driven by
+  Dean-configurable soft-constraint weights (Balance Workload / Spread
+  Sessions Across Days / Minimize Gaps), skipped when no soft constraint is
+  enabled
 - Ant Design–based UI and layout
 
 ### Out of Scope
@@ -101,7 +126,9 @@ This is a prototype scheduling application that helps a school Dean generate a c
 - Full-strength CSP/GA optimization (can start with a simpler valid-schedule algorithm, running either in a Convex action or an external Python service, and upgrade later)
 - Manual drag-and-drop schedule editing
 - Publishing, versioning, notifications, and analytics
-- Teacher preferences (soft constraints) and change-request/conflict flagging
+- Teacher change requests and conflict flagging
+- Re-running the optimizer on every manual schedule adjustment (there is no
+  manual adjustment yet — see Out of Scope above)
 
 ## Success Criteria
 

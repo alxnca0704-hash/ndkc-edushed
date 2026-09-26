@@ -14,6 +14,7 @@ import type * as migrations from "../migrations.js";
 import type * as roles from "../roles.js";
 import type * as rooms from "../rooms.js";
 import type * as schedule from "../schedule.js";
+import type * as scheduleSettings from "../scheduleSettings.js";
 import type * as scheduling_csp from "../scheduling/csp.js";
 import type * as scheduling_cspDiagnostics from "../scheduling/cspDiagnostics.js";
 import type * as scheduling_ga from "../scheduling/ga.js";
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   roles: typeof roles;
   rooms: typeof rooms;
   schedule: typeof schedule;
+  scheduleSettings: typeof scheduleSettings;
   "scheduling/csp": typeof scheduling_csp;
   "scheduling/cspDiagnostics": typeof scheduling_cspDiagnostics;
   "scheduling/ga": typeof scheduling_ga;

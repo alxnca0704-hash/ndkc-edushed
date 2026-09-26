@@ -3,7 +3,7 @@ import {
   explainPatternFailure,
   freeWindowsForDay,
 } from "../convex/scheduling/cspDiagnostics";
-import { runGA } from "../convex/scheduling/ga";
+import { measurePenalties, runGA } from "../convex/scheduling/ga";
 import { validateSolution } from "../convex/scheduling/validate";
 import type {
   PatternInfeasibility,
@@ -14,6 +14,7 @@ import type {
   SchedulingRoom,
   SchedulingSubject,
   SchedulingTimeSlot,
+  SoftConstraintWeights,
 } from "../convex/scheduling/types";
 import { DAY_PATTERN_DAY_INDEXES } from "../constants/dayPatterns";
 import {
@@ -127,7 +128,6 @@ function assertPatternPair(
 
 let failures = 0;
 let assertions = 0;
-
 function check(condition: boolean, label: string): void {
   assertions += 1;
   if (condition) {
@@ -136,6 +136,59 @@ function check(condition: boolean, label: string): void {
     failures += 1;
     console.error(`  FAIL ${label}`);
   }
+}
+
+const NO_PREFERENCES: SoftConstraintWeights = {
+  workloadBalance: 0,
+  daySpread: 0,
+  gapMinimization: 0,
+};
+
+/** xorshift32, so a GA run is reproducible instead of at the mercy of the host. */
+function seededRandom(seed: number): () => number {
+  let state = seed >>> 0 || 1;
+  return () => {
+    state ^= state << 13;
+    state >>>= 0;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    state >>>= 0;
+    return state / 0x100000000;
+  };
+}
+
+function placementKey(placement: PlacedSession): string {
+  const { subjectId, dayIndex, dayPattern, startMinutes, endMinutes, roomId } =
+    placement;
+  return [
+    subjectId,
+    dayPattern,
+    dayIndex,
+    startMinutes,
+    endMinutes,
+    roomId,
+  ].join("|");
+}
+
+function samePlacements(
+  left: readonly PlacedSession[],
+  right: readonly PlacedSession[],
+): boolean {
+  const a = left.map(placementKey).sort();
+  const b = right.map(placementKey).sort();
+  return a.length === b.length && a.every((key, index) => key === b[index]);
+}
+
+function weightedScore(
+  solution: readonly PlacedSession[],
+  weights: SoftConstraintWeights,
+): number {
+  const penalties = measurePenalties(solution);
+  return (
+    penalties.workloadBalance * weights.workloadBalance +
+    penalties.daySpread * weights.daySpread +
+    penalties.gapMinimization * weights.gapMinimization
+  );
 }
 
 function allBlockedAvailability(teachers: readonly string[]): SchedulingAvailability[] {
@@ -212,10 +265,114 @@ function main() {
     );
   }
 
+  // One teacher, three subjects, three rooms and no blocks: the CSP keeps the
+  // MW preference and lands all three on Monday and Wednesday, so both the
+  // day-spread and the workload penalty are non-zero before the GA runs.
+  const stackRooms: SchedulingRoom[] = [
+    { id: "stack-room-1", name: "Stack Hall 1", type: "lecture" },
+    { id: "stack-room-2", name: "Stack Hall 2", type: "lecture" },
+    { id: "stack-room-3", name: "Stack Hall 3", type: "lecture" },
+  ];
+  const stackSubjects: SchedulingSubject[] = [
+    {
+      id: "stack-1",
+      name: "Stack 101",
+      teacherId: "t-stack",
+      roomId: "stack-room-1",
+      requiredRoomType: "lecture",
+      durationMinutes: 60,
+    },
+    {
+      id: "stack-2",
+      name: "Stack 102",
+      teacherId: "t-stack",
+      roomId: "stack-room-2",
+      requiredRoomType: "lecture",
+      durationMinutes: 60,
+    },
+    {
+      id: "stack-3",
+      name: "Stack 103",
+      teacherId: "t-stack",
+      roomId: "stack-room-3",
+      requiredRoomType: "lecture",
+      durationMinutes: 60,
+    },
+  ];
+  const stackInput = buildInput(stackSubjects, stackRooms, []);
+  const stackResult = runCSP(stackInput);
+
+  // Hand-built so the gap is exactly known: t-gap teaches 7:30 and 11:30 on both
+  // MW days, and t-other's 3-hour class holds the only other room from 8:30 to
+  // 11:30, which is what forces the late one out.
+  const gapRooms: SchedulingRoom[] = [
+    { id: "gap-room-1", name: "Gap Hall 1", type: "lecture" },
+    { id: "gap-room-2", name: "Gap Hall 2", type: "lecture" },
+  ];
+  const gapSubjects: SchedulingSubject[] = [
+    {
+      id: "gap-a",
+      name: "Gap A",
+      teacherId: "t-gap",
+      roomId: "gap-room-1",
+      requiredRoomType: "lecture",
+      durationMinutes: 60,
+    },
+    {
+      id: "gap-b",
+      name: "Gap B",
+      teacherId: "t-gap",
+      roomId: "gap-room-2",
+      requiredRoomType: "lecture",
+      durationMinutes: 60,
+    },
+    {
+      id: "gap-c",
+      name: "Gap C",
+      teacherId: "t-other",
+      roomId: "gap-room-2",
+      requiredRoomType: "lecture",
+      durationMinutes: 180,
+    },
+  ];
+  const gapInput = buildInput(gapSubjects, gapRooms, []);
+  const gapSeed: PlacedSession[] = [0, 2].flatMap((dayIndex) => [
+    {
+      subjectId: "gap-a",
+      teacherId: "t-gap",
+      roomId: "gap-room-1",
+      dayPattern: "MW" as const,
+      dayIndex,
+      startMinutes: 450,
+      endMinutes: 510,
+    },
+    {
+      subjectId: "gap-c",
+      teacherId: "t-other",
+      roomId: "gap-room-2",
+      dayPattern: "MW" as const,
+      dayIndex,
+      startMinutes: 510,
+      endMinutes: 690,
+    },
+    {
+      subjectId: "gap-b",
+      teacherId: "t-gap",
+      roomId: "gap-room-2",
+      dayPattern: "MW" as const,
+      dayIndex,
+      startMinutes: 690,
+      endMinutes: 750,
+    },
+  ]);
+
   console.log("GA: seed from CSP must stay valid");
   if (cspResult.ok) {
-    const gaResult = runGA(feasible, cspResult.solution);
-    const gaValidation = validateSolution(feasible, gaResult);
+    const gaResult = runGA(feasible, cspResult.solution, {
+      weights: NO_PREFERENCES,
+      random: seededRandom(1),
+    });
+    const gaValidation = validateSolution(feasible, gaResult.schedule);
     check(
       gaValidation.valid,
       "GA output has zero hard-constraint violations",
@@ -223,13 +380,150 @@ function main() {
     if (!gaValidation.valid) {
       gaValidation.violations.forEach((violation) => console.error(`  - ${violation}`));
     }
-    check(gaResult.length > 0, "GA returns a non-empty schedule");
+    check(gaResult.schedule.length > 0, "GA returns a non-empty schedule");
     check(
       SUBJECTS.every((subject) =>
-        assertPatternPair(gaResult, subject, patternDaysForSubject(gaResult, subject.id)),
+        assertPatternPair(
+          gaResult.schedule,
+          subject,
+          patternDaysForSubject(gaResult.schedule, subject.id),
+        ),
       ),
-      "GA keeps the seed-chosen pattern's day-pair (same time, same room) intact",
+      "GA keeps every subject's day-pair intact (same time, same room)",
     );
+    check(
+      gaResult.fitness === 0,
+      "all weights off means every candidate scores 0, so the CSP seed is returned untouched",
+    );
+    check(
+      samePlacements(gaResult.schedule, cspResult.solution),
+      "all weights off returns the CSP schedule exactly (no GA work spent)",
+    );
+  }
+
+  console.log("GA: weights decide what gets optimized, and the score is explained");
+  if (cspResult.ok) {
+    const gapWeights = { ...NO_PREFERENCES, gapMinimization: 5 };
+    const gapResult = runGA(feasible, cspResult.solution, {
+      weights: gapWeights,
+      random: seededRandom(7),
+    });
+    check(
+      validateSolution(feasible, gapResult.schedule).valid,
+      "a gap-only optimization still passes every hard constraint",
+    );
+    check(
+      gapResult.fitness === 5 * gapResult.penalties.gapMinimization,
+      "gap-only fitness is exactly weight x gap penalty",
+    );
+    check(
+      gapResult.fitness <= weightedScore(cspResult.solution, gapWeights),
+      "the GA never returns a worse weighted score than the CSP seed it started from",
+    );
+    check(
+      SUBJECTS.every((subject) =>
+        assertPatternPair(
+          gapResult.schedule,
+          subject,
+          patternDaysForSubject(gapResult.schedule, subject.id),
+        ),
+      ),
+      "an optimized schedule keeps every subject's day-pair intact",
+    );
+  }
+
+  console.log("GA: the pattern gene lets a teacher use the whole week");
+  if (stackResult.ok) {
+    const seedPenalties = measurePenalties(stackResult.solution);
+    check(
+      seedPenalties.daySpread > 0 && seedPenalties.workloadBalance > 0,
+      "the CSP stacks one teacher onto MW only, costing both spread and workload points",
+    );
+    const spreadWeights = {
+      workloadBalance: 10,
+      daySpread: 10,
+      gapMinimization: 0,
+    };
+    const spreadGA = runGA(stackInput, stackResult.solution, {
+      weights: spreadWeights,
+      random: seededRandom(42),
+    });
+    check(
+      validateSolution(stackInput, spreadGA.schedule).valid,
+      "the spread-optimized schedule still passes every hard constraint",
+    );
+    const optimized = measurePenalties(spreadGA.schedule);
+    check(
+      optimized.daySpread < seedPenalties.daySpread,
+      `day-spread penalty drops (${seedPenalties.daySpread} -> ${optimized.daySpread}) by using both MW and TTh`,
+    );
+    check(
+      optimized.workloadBalance < seedPenalties.workloadBalance,
+      `workload penalty drops (${seedPenalties.workloadBalance} -> ${optimized.workloadBalance}) because no teacher-day is overloaded`,
+    );
+    check(
+      spreadGA.fitness ===
+        optimized.workloadBalance * 10 + optimized.daySpread * 10,
+      "the reported fitness is the weighted sum of the reported penalties",
+    );
+    check(
+      spreadGA.schedule.length === stackSubjects.length * 2,
+      "still exactly 2 linked sessions per subject after optimization",
+    );
+    for (const subject of stackSubjects) {
+      check(
+        assertPatternPair(
+          spreadGA.schedule,
+          subject,
+          patternDaysForSubject(spreadGA.schedule, subject.id),
+        ),
+        `"${subject.name}" lands on a valid day-pair at the same time in the same room`,
+      );
+    }
+  }
+
+  console.log("GA: an idle hole in a teacher's day is the gap penalty");
+  check(
+    measurePenalties(gapSeed).gapMinimization > 0,
+    "the hand-built seed (7:30, then 11:30) reports idle time inside the day",
+  );
+  check(
+    validateSolution(gapInput, gapSeed).valid,
+    "the hand-built gap seed is itself conflict-free",
+  );
+  const gapOnly = runGA(gapInput, gapSeed, {
+    weights: { ...NO_PREFERENCES, gapMinimization: 4 },
+    random: seededRandom(3),
+  });
+  check(
+    validateSolution(gapInput, gapOnly.schedule).valid,
+    "gap optimization keeps the hand-built seed's hard constraints",
+  );
+  check(
+    gapOnly.penalties.gapMinimization < measurePenalties(gapSeed).gapMinimization,
+    `the GA closes the idle hole (${measurePenalties(gapSeed).gapMinimization} -> ${gapOnly.penalties.gapMinimization})`,
+  );
+  check(
+    gapOnly.penalties.daySpread > 0,
+    "day spread is still reported as a penalty even though it is weighted 0",
+  );
+  check(
+    gapOnly.fitness === 4 * gapOnly.penalties.gapMinimization,
+    "the gap-only score ignores the unweighted day-spread penalty completely",
+  );
+
+  console.log("GA: an infeasible seed is rejected outright");
+  if (cspResult.ok) {
+    let threw = false;
+    try {
+      runGA(feasible, cspResult.solution.slice(1), {
+        weights: { ...NO_PREFERENCES, daySpread: 10 },
+        random: seededRandom(1),
+      });
+    } catch {
+      threw = true;
+    }
+    check(threw, "runGA throws instead of optimizing an invalid seed schedule");
   }
 
   console.log("CSP: picks TTh when MW is fully blocked but TTh is free");

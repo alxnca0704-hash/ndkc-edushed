@@ -5,26 +5,102 @@ change.
 
 ## Current Phase
 
-Complete — Conflict Alert on the Generated Schedule page (spec 09). A
-generate failure now renders one shadcn `Alert` (variant `destructive`) per
-unplaceable subject, and each alert names the concrete cause the engine found
-(room + the class holding it + the overlapping time, teacher + the blocked
-window, or the teacher's own classes eating the pair's days). The scheduling
-engine gained a structured `ConflictDetail`; the UI only maps a conflict kind
-to an icon/label. Spec 09's second application point (a failed
-drag-and-drop / auto-adjusted move) has **no code to attach to** — see Open
-Questions.
+Complete — Wire the GA into schedule generation (spec 10). A generate now
+runs the CSP and then, when the Dean has switched on at least one soft
+constraint, the GA on top of the CSP's schedule, scored against the Dean's
+saved weights. The score is a penalty total (lower is better, 0 = no penalty)
+returned in the action's response and shown as a badge beside the Generate
+button; the three penalties (workload, day-spread, idle gaps) are measured
+independently of the weights so the number can be explained. Settings live in
+one `scheduleSettings` row, edited in a shadcn `Dialog` of `Switch` +
+`Slider` rows, and all weights 0 means the GA is skipped and no score is
+shown. Browser verification is still outstanding — see Next Up.
 
 ## Current Goal
 
-Shipped (see Completed). Remaining follow-up for this unit: force a real
-generate failure in the browser with a Dean login (e.g. block a teacher's
-whole MW pair, or point two subjects at one room) and eyeball the
-`ConflictAlert` — icon per kind, the fact rows, the destructive (not neon red)
-palette, and the single-subject vs accordion-list layouts.
+Shipped (see Completed). Remaining follow-up for this unit: eyeball it in
+the browser with a Dean login — open Optimization, toggle constraints,
+move a weight slider, save, re-open and confirm the values persisted, then
+generate once with a weight on (check the badge, its "lower is better"
+label, and the toast's "generated and optimized") and once with everything
+off (no badge, plain "generated" toast). Also confirm the dialog's
+loading/error/saving states and that Cancel discards unsaved edits.
+
 
 ## Completed
 
+- **Schedule Optimization (Dean) — the GA wired into `generate` (spec 10)** —
+  full unit:
+  - **Scope first, per the spec's "do this first":** `project-overview.md` now
+    has a **"Schedule Optimization (Dean)"** Features section; the old
+    "Teacher preferences (soft constraints)" Out-of-Scope entry is replaced by
+    the three Dean-configurable constraints, and re-optimizing on a manual
+    adjustment stays out of scope (there is no manual adjustment to trigger
+    it). This retires the old "Next Up #6" note that deferred wiring until
+    soft constraints came in scope.
+  - `types/scheduleSettings.ts` + `constants/scheduleSettings.ts`: the
+    app-level `ScheduleSettings` shape (`{ workloadBalance, daySpread,
+    gapMinimization }`, each `{ enabled, weight }`), the UI-order key list,
+    labels, descriptions, the 0–10 range, and `DEFAULT_SCHEDULE_SETTINGS` —
+    the constants file imports its types relatively so `convex/` can consume
+    it.
+  - `convex/schema.ts`: one `scheduleSettings` table, a singleton by
+    convention. **Groups are flattened** into `workloadBalanceEnabled`,
+    `workloadBalanceWeight`, … rather than a nested object, matching how the
+    rest of the schema is written.
+  - `convex/scheduleSettings.ts`: Dean-gated `get` (returns the defaults when
+    no row exists yet) and `save` (inserts the singleton on first save,
+    replaces it after, rejects a second row). Weights are validated as
+    integers in 0–10; `enabled` is stored for display but the engine treats
+    **weight 0 as off**, so the two can never disagree.
+  - `convex/scheduling/types.ts`: `SoftConstraintWeights`, `SoftConstraintKey`,
+    `GaPenalties`, `GaResult`, and `GaOptions.weights` + `GaOptions.random`.
+  - `convex/scheduling/ga.ts`: rewritten around weighted fitness and a
+    **two-part chromosome** — `order` (which subject claims a time first, the
+    only lever that can close a teacher's idle gap) and `patterns` (each
+    subject's MW/TTh choice, the only lever that can change a teacher's class
+    count per day). `measurePenalties` scores the three penalties
+    independently of the weights; `normalizeWeights` clamps 0–10;
+    `hasActiveConstraint` is the skip check. `runGA` returns
+    `{ schedule, fitness, penalties }` and never returns a worse schedule than
+    the seed it was given.
+  - `convex/schedule.ts`: CSP first, then the settings read (**best effort** —
+    a failed read falls back to the all-zero defaults, so a broken settings
+    query degrades to a plain CSP schedule instead of failing the generate),
+    then `runGA` only when a weight is non-zero, then a re-validation of the GA
+    output before anything is persisted. A validation failure degrades to the
+    untouched CSP schedule with no score rather than failing the generate,
+    since an invalid GA output is an engine bug and the optimization is
+    best-effort by design. The action's success result gained
+    `optimization: OptimizationResult | null`.
+  - **Fitness is not persisted.** The score is returned in the action response
+    and rendered transiently; nothing is written to a table for it, so a
+    re-render or a page reload can never show a stale number.
+  - `hooks/useScheduleSettings.ts` (new) + `components/schedule/
+    SoftConstraintSettings.tsx` (new): the query/mutation live in the hook,
+    the shadcn `Dialog` is presentational, with a `Switch` per constraint and
+    a `Slider` (0–10) revealed while it's on. Save is disabled while
+    unchanged, Cancel discards, and the draft re-syncs from the query during
+    render (the repo's lint config rejects `setState` in an effect).
+  - `components/schedule/SchedulePage.tsx`: an **Optimization** button opens
+    the dialog; the score appears as a muted `Badge` + "lower is better" line
+    under the toolbar, and only when the GA actually ran.
+  - `convex/scheduling/ga.ts` also gained an injectable `random` so the smoke
+    test is deterministic, plus a guard in `mutateOrder` for a single-subject
+    schedule (a one-element permutation has no second index to swap with, so
+    the retry loop could never exit).
+  - **Verification:** `npx tsc --noEmit` clean, `npm run lint` clean (only the
+    5 pre-existing warnings in `convex/_generated` + `auth.config.ts`),
+    `npm run build` green, `npx tsx scripts/scheduling-smoke-test.ts` **77
+    assertions / 0 failures**, and `npx convex dev --once` pushed to
+    `dev:astute-akita-425` (verified the new `scheduleSettings` table exists via
+    `npx convex data scheduleSettings`).
+  - Smoke coverage added for this unit: all-weights-off returns the CSP
+    schedule exactly; a weight of 0 removes its term from the score while the
+    penalty is still reported; the pattern gene takes a 3-subject/1-teacher
+    fixture from workload 2 + spread 2 down to 0 + 0 while staying valid and
+    pair-linked; a hand-built seed with a real 3-hour idle hole has its gap
+    penalty driven 6 → 0; and an invalid seed throws.
 - **Conflict Status Alert on the Generated Schedule Page (spec 09)** — full
   unit:
   - Installed shadcn `alert` via the CLI as its own step (`npx shadcn add
@@ -771,13 +847,18 @@ palette, and the single-subject vs accordion-list layouts.
 
 ## In Progress
 
-- None. Spec 09 (conflict alert on the generated schedule page) is complete
-  and pushed to dev; the CSP/GA engine is unchanged apart from diagnostic
-  output.
+- (none — spec 10 was the only open unit; it is now in Completed.)
 
 ## Next Up
 
-1. Sanity-check spec 09 in the browser with a real Dean login: force a
+1. Sanity-check spec 10 in the browser with a real Dean login: open
+   Optimization, toggle each constraint, drag a weight, save, re-open (the
+   values must come back from the `scheduleSettings` row), then generate once
+   with a weight on and once with everything off. The dialog's
+   loading/error/saving states, the "Save settings" disabled-while-unchanged
+   rule, Cancel-discards behavior, the score `Badge` + "lower is better" line,
+   and the toast wording have not been eyeballed.
+2. Sanity-check spec 09 in the browser with a real Dean login: force a
    generate failure (block a teacher's whole MW pair, or point two subjects at
    one room so it is taken at every shared start) and confirm the
    `ConflictAlert` names the room + the class holding it + the overlapping
@@ -800,17 +881,36 @@ palette, and the single-subject vs accordion-list layouts.
    the generated `schedules` rows filtered by teacher id
 5. Dean schedule view polish / student-facing schedule (out of scope until
    confirmed in specs)
-6. (Optional, later) Wire `runGA` into the `generate` action once soft
-   constraints come in scope — `convex/scheduling/ga.ts` is already built,
-   standalone-tested (pair-atom chromosomes), and left with a clear call
-   site
-7. Sanity-check the 2-column availability grid in the browser (real teacher
+6. Sanity-check the 2-column availability grid in the browser (real teacher
    login): red blocked cells, save/reset round-trip, tooltip labels — the
    pattern keys and grid are covered by lint/build/smoke, but the visual/UX
    hasn't been eyeballed
 
 ## Open Questions
 
+- **What the Dean's weights actually mean, now that a score exists** (asked by
+  spec 10, answered — the honest limits are recorded here): the number is a
+  **penalty total in "constraint points"**, not a percentage, quality grade, or
+  0–100 score, and only its *ordering* is meaningful (a schedule with 12 is
+  better balanced than one with 40 for the same weights). The weights are
+  relative, so a weight of 10 vs 4 does not mean "2.5× more important" in any
+  absolute sense — it changes how the GA trades one penalty against another,
+  and the absolute size depends on the week's shape. So the UI says "lower is
+  better" and names the constraints in the score, but does **not** label the
+  number (no grade, no "80% optimized"): there is nothing to compare it against
+  and a label would be a claim the engine can't back. Also worth knowing: a
+  score is only comparable to another score generated with the **same weights**
+  — the fitness is not persisted, so after changing the weights there is no
+  previous number to compare against.
+- **Whether `enabled` is worth keeping at all** (spec 10 asked for a per-
+  constraint on/off; noted rather than settled): weight 0 already means "off"
+  and the engine only reads the weights, so `enabled` exists purely to make the
+  UI state explicit (a constraint can be left on with weight 0, which reads as
+  "on but not counted" and is indistinguishable in the score from off). It is
+  stored on the row for display, not consulted by the scheduler. If a future
+  spec wants "on with weight 0" to behave differently from "off", the two
+  fields need to diverge and that has to be a deliberate change to
+  `normalizeWeights`.
 - **Spec 09's drag-and-drop half does not exist (asked by the spec, answered —
   N/A)**: the spec wants the same alert after "a failed or auto-adjusted
   drag-and-drop action", consumed from a structured `reschedule.ts` result.
@@ -967,6 +1067,87 @@ palette, and the single-subject vs accordion-list layouts.
 
 ## Architecture Decisions
 
+- **Fitness is a penalty total, so lower is better and 0 is perfect** (spec
+  10). A schedule that violates no soft constraint scores 0 and a worse
+  schedule scores higher, which matches how the constraints are phrased ("more
+  classes than X in a day", "fewer than 4 days", "N idle hours") and avoids
+  inventing a normalization (percentage of an ideal) that would have no stable
+  denominator. The three penalties are measured in `measurePenalties`
+  *independently of the weights* and the weights are applied afterwards in
+  `score`, so `GaResult` can return both and the UI can name which constraint
+  cost what instead of showing one opaque number.
+- **The exact penalty definitions, recorded because they are the scoring
+  contract** (spec 10 left them to us):
+  - `workloadBalance` — per teacher-day, `max(0, classes − 2)`, summed. Two
+    classes a day is the comfort ceiling; the 3rd costs 1 point, the 4th
+    costs 2.
+  - `daySpread` — per teacher, `max(0, 4 − daysTaught)`, summed. A day-pair
+    week can only span Mon/Tue/Wed/Thu, so 4 is the ceiling and 0 is
+    achievable; a teacher who teaches on one pair is charged 2.
+  - `gapMinimization` — per teacher-day, `floor(span − teaching minutes) / 60`
+    idle hours, summed, floored at 0 per day (not at 0 overall, so many small
+    20-minute holes can't silently sum to a free hour). This is the only
+    continuous term, so it's the one that makes re-timing a class worth
+    something.
+  - The 2-per-day and 4-day ceilings are constants in `ga.ts`
+    (`COMFORTABLE_CLASSES_PER_DAY`, `DAYS_IN_A_SCHOOL_WEEK`), not magic numbers
+    sprinkled through the scoring loop.
+- **A weight of 0 removes the term from the fitness entirely** (spec 10 asked
+  us to decide whether "off" removes the constraint or just zeroes its
+  influence — they're the same thing, so no separate code path). A 0-weighted
+  constraint can neither improve nor worsen the result, and when all three are
+  0 the action **skips `runGA` entirely** instead of running a search whose
+  fitness is 0 for every member. That is the difference between "no preference"
+  and "no optimization", and it is why `optimization` is `null` (not
+  `fitness: 0`) when the GA didn't run.
+- **The GA gets the MW/TTh pattern back as a second chromosome gene** (spec
+  10). The chromosome is now `{ order, patterns }`: `order` decides which
+  subject claims a time first (the only lever that can close an idle gap),
+  `patterns` carries each subject's day-pair (the only lever that can change a
+  teacher's class count on a given day). With the old pair-atom chromosome the
+  pattern was locked to the CSP's pick, so **two of the three requested
+  constraints were structurally unfixable** — a teacher's Mon/Wed count is a
+  function of which pattern each of their subjects took, and re-timing a class
+  cannot change it. The genes start at the CSP's own order and patterns, so
+  the search begins from exactly what the CSP decided and only moves a subject
+  to the other pair when a soft constraint pays for it. Crossover/mutation are
+  both validity-preserving (order stays a permutation, patterns only ever take
+  a value the subject actually has candidates for), so there's no repair step.
+- **The GA is a second stage that can never lose to the CSP**: the CSP's
+  solution is the incumbent — `best` starts as it, `best` is copied into the
+  front of every generation, and ties keep the incumbent. A candidate whose
+  greedy decode fails is discarded rather than repaired. So the action's output
+  is always valid (Invariant 5) and never worse than what the CSP produced on
+  its own, even in the pathological case where no candidate beats the seed.
+  `runGA` also *rejects* an invalid seed (`validateSolution`) instead of
+  optimizing garbage, and the action re-validates the GA's output before
+  persisting it.
+- **The score is returned, not stored**: `optimization` is a transient part of
+  the action's success result and lives in `useSchedule` state only, cleared at
+  the start of every generate. Writing it to the `schedules` rows (or a
+  separate history table) would imply the score is a property of a schedule;
+  it's a property of a schedule *plus a weight configuration*, and the weights
+  can change at any time. This also means the UI can never show a stale score.
+- **Settings live in one singleton `scheduleSettings` row, not per schedule
+  row** (spec 10): they're a property of the Dean, not of a timetable, and the
+  generate action reads them at generation time. Groups are flattened into
+  columns on the row, consistent with the rest of the schema, and a missing
+  row resolves to the all-zero defaults rather than blocking a generate — a
+  broken/failed settings read degrades to a plain CSP schedule (no score)
+  instead of failing the whole thing.
+- **`GaOptions.random` is injectable**: it defaults to `Math.random`, but the
+  smoke test passes a seeded xorshift32 so GA assertions ("the gap penalty
+  drops 6 → 0", "all weights off returns the CSP schedule exactly") are
+  deterministic instead of flaky. A stochastic optimizer that can't be
+  reproduced is a test liability, and the plumbing is six extra parameters.
+- **The optimization settings UI is a shadcn `Dialog` of `Switch` + `Slider`
+  rows**, opened by an "Optimization" button beside Generate: the weights only
+  matter at generate time, so a modal that owns the whole configuration and
+  saves explicitly beats either an always-visible panel (crowds the schedule
+  page) or a popover (too cramped for three sliders + descriptions). The
+  `Switch` is the single source of truth for "on": the slider is only revealed
+  while it's on, and a weight of 0 with the switch on still means "off" to the
+  engine (see the decision above), which is stated in the dialog's copy.
 - **Conflict explanations are engine output, not UI derivation (spec 09)**: a
   failed generate hands the UI `InfeasibilityReason[]` where every pattern
   carries a `ConflictDetail` (`kind` + ready-to-render `title`/`message`/
@@ -1214,6 +1395,16 @@ palette, and the single-subject vs accordion-list layouts.
   the component already accepts `variant="default"` for whenever that feature
   is explicitly brought into scope. Also installed the shadcn `alert`
   primitive as its own step first, per `ai-workflow-rules.md`.
+- Spec: `context/spec/10-wired-ga-algorithm.md` (wire the GA into schedule
+  generation with Dean-configurable soft constraints) — the same surprise
+  shape as specs 08/09, twice over: the spec's assumed `runGA` API
+  (`runGA(schedule, subjects, rooms, blockedSlots, weights)` with a readable
+  `.fitness`) **did not exist** — the real signature took no weights and
+  returned no fitness — so the weights/fitness surface was added rather than
+  worked around; and the pair-atom chromosome had to gain a pattern gene or
+  two of the three constraints would have been structurally unfixable. It
+  also carried its own "Scope Update (do this first)" section, which is why
+  the overview change was logged before any code was written.
 - Unit: Fixed Day-Pair Scheduling (MW / TTh) — extended spec 05's engine
   from `meetingsPerWeek` to linked `dayPattern` pairs (see Completed)
 - Unit: Teacher Availability by Day-Pair (MW / TTh) — spec 06; ran
@@ -1253,6 +1444,21 @@ palette, and the single-subject vs accordion-list layouts.
   imports `../schema.js` directly, so schema shape changes need no codegen
   diff — the optional→required flip was enforced by the push itself, not by
   a generated file.
+- Unit: Schedule Optimization — the GA wired into `generate` (spec 10) — see
+  Completed. Schema + functions pushed to `dev:astute-akita-425` with
+  `npx convex dev --once`; confirmed the new table with `npx convex data
+  scheduleSettings` (empty until a Dean first saves — `get` returns the
+  defaults). Two things worth remembering for later units:
+  - **The vendored Base UI `Slider` types `onValueChange` as
+    `number | readonly number[]`** even though a single-thumb slider always
+    reports a number, so the handler in `SoftConstraintSettings` narrows it.
+    Same for `Switch`: passing `id` is what wires a `<Label htmlFor>` to the
+    primitive's hidden input.
+  - **The seeded xorshift32 in the smoke test makes the GA assertions
+    deterministic.** Without it, "day spread drops 2 → 0" style assertions
+    would be luck-dependent — remember to re-run the smoke test a few times
+    after any change to the population/iteration defaults or the mutation
+    rates before trusting a green run.
 - PowerShell 5.1 caveat: to pass double quotes through `npx convex run
   --inline-query`, write the inner strings with doubled single quotes
   (`query(''rooms'')`), since PS otherwise strips `"` from native args.

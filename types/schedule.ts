@@ -1,5 +1,6 @@
 import type { SubjectYearLevel } from "@/types/course";
 import type { RoomType } from "@/types/rooms";
+import type { OptimizationResult } from "@/types/scheduleSettings";
 
 export interface ScheduleSession {
   _id: string;
@@ -88,7 +89,15 @@ export interface InfeasibleSubject {
 }
 
 export type GenerateScheduleResult =
-  | { ok: true; count: number }
+  | {
+      ok: true;
+      count: number;
+      /**
+       * `null` when the GA was skipped because no soft constraint is enabled —
+       * there is no score to show in that case, and showing a 0 would be a lie.
+       */
+      optimization: OptimizationResult | null;
+    }
   | {
       ok: false;
       error: string;

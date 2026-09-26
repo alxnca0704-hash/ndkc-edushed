@@ -6,6 +6,7 @@ import { useCallback, useMemo, useState } from "react";
 import { api } from "@/convex/_generated/api";
 import { SUBJECT_YEAR_LEVEL_LABELS } from "@/constants/courses";
 import type { SubjectYearLevel } from "@/types/course";
+import type { OptimizationResult } from "@/types/scheduleSettings";
 import type {
   GenerateScheduleResult,
   GroupedSchedule,
@@ -24,6 +25,12 @@ export interface UseScheduleResult {
   isGenerating: boolean;
   generateError: string | null;
   infeasibleSubjects: InfeasibleSubject[] | null;
+  /**
+   * Fitness of the schedule currently on screen. Only set by a generation that
+   * actually ran the GA, and cleared when a new generation starts — it describes
+   * one specific run, not the schedule table.
+   */
+  optimization: OptimizationResult | null;
   generate: () => Promise<GenerateScheduleResult>;
 }
 
@@ -64,6 +71,9 @@ export function useSchedule(): UseScheduleResult {
   const [infeasibleSubjects, setInfeasibleSubjects] = useState<
     InfeasibleSubject[] | null
   >(null);
+  const [optimization, setOptimization] = useState<OptimizationResult | null>(
+    null,
+  );
   const [preferredKey, setPreferredKey] = useState<string | null>(null);
 
   const isLoading = listQuery === undefined || subjectsQuery === undefined;
@@ -149,6 +159,9 @@ export function useSchedule(): UseScheduleResult {
     setIsGenerating(true);
     setGenerateError(null);
     setInfeasibleSubjects(null);
+    // The score belongs to one generation, so a new one starts without it
+    // rather than leaving the previous run's number next to the button.
+    setOptimization(null);
     try {
       const result = await generateAction();
       if (!result.ok) {
@@ -156,6 +169,8 @@ export function useSchedule(): UseScheduleResult {
         if (result.infeasibleSubjects && result.infeasibleSubjects.length > 0) {
           setInfeasibleSubjects([...result.infeasibleSubjects]);
         }
+      } else {
+        setOptimization(result.optimization);
       }
       return result;
     } finally {
@@ -174,6 +189,7 @@ export function useSchedule(): UseScheduleResult {
     isGenerating,
     generateError,
     infeasibleSubjects,
+    optimization,
     generate,
   };
 }

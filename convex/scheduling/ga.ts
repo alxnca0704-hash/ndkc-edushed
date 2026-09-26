@@ -1,52 +1,176 @@
 import type {
   GaOptions,
+  GaPenalties,
+  GaResult,
   PlacedSession,
   SchedulingDayPattern,
   SchedulingInput,
+  SoftConstraintWeights,
 } from "./types";
 import {
   expandSubjectsIntoSessions,
   greedyDecode,
+  type SubjectDomain,
   type SubjectUnit,
 } from "./csp";
 import { validateSolution } from "./validate";
 
 /*
- * Genetic Algorithm optimizer.
+ * Genetic Algorithm optimizer — the second stage of "Generate Schedule".
  *
- * The CSP has already chosen a day pattern (MW or TTh) per subject; the GA
- * locks that choice in by building exactly ONE unit per subject — the option
- * whose pattern matches the subject's sessions in the seed solution — before
- * optimizing the ordering. It takes the CSP's valid schedule and tries to
- * improve it against soft constraints (minimizing a teacher's idle gaps and
- * same-day overload). The GA only ever produces valid schedules:
+ * The CSP always runs first and owns every hard constraint. The GA then takes
+ * that conflict-free schedule and tries to make it nicer to live with, scoring
+ * candidates against the Dean's weighted soft constraints. Lower fitness is
+ * better; 0 means no soft-constraint penalty at all.
  *
- *   - A chromosome is a permutation of subject units. Each unit IS a
- *     day-pair (MW or TTh): decoding it always places both sessions at the
- *     same time in the same room, so the paired-day constraint cannot be
- *     broken by any crossover/mutation/repair step.
- *   - Decoding assigns each unit greedily to its first non-conflicting
- *     candidate time on BOTH pattern days, using the same occupancy rules
- *     as the CSP.
- *   - Members whose decode fails fall back to the current best (valid)
- *     schedule, so the population never contains a conflicting timetable.
+ *   - The CSP is the fallback, never the competitor. The best member starts as
+ *     the CSP's own solution and is carried into every generation, so the
+ *     result is never worse than what the CSP found and is always valid.
+ *   - A candidate whose decode fails (greedy placement runs out of room) is
+ *     discarded, so the population never contains a conflicting timetable.
+ *   - Decode assigns each unit greedily to its first non-conflicting candidate
+ *     time, using the same occupancy rules as the CSP, and a unit IS a
+ *     day-pair, so both sessions of a subject always land on the same time in
+ *     the same room.
  *
- * NOTE: Intentionally NOT wired into the live "Generate Schedule" flow —
- * soft constraints are out of scope for this prototype (project-overview).
- * If enabled later, replace the fallback with a proper cost-aware repair.
+ * The chromosome has two parts, because the soft constraints need two levers:
+ *
+ *   - `order` — which subject claims a time first. This is what moves a class
+ *     to a different hour, so it is the only thing that can close the gaps in a
+ *     teacher's day.
+ *   - `patterns` — the MW/TTh choice per subject. A teacher's class count on a
+ *     given day is fixed by which subjects they teach and by those patterns, so
+ *     without this gene "balance workload" and "spread sessions across days"
+ *     would be unfixable: no amount of re-timing can move a class from Monday
+ *     to Tuesday.
+ *
+ * Order crossover keeps `order` a permutation; the pattern gene is inherited
+ * per subject. Both mutations are validity-preserving, so no repair step is
+ * needed.
  */
 
-interface Member {
+/** Classes a teacher can hold in one day before it counts as overloaded. */
+const COMFORTABLE_CLASSES_PER_DAY = 2;
+
+/** Days a day-pair week can occupy: Mon, Tue, Wed, Thu. */
+const DAYS_IN_A_SCHOOL_WEEK = 4;
+
+const NO_WEIGHTS: SoftConstraintWeights = {
+  workloadBalance: 0,
+  daySpread: 0,
+  gapMinimization: 0,
+};
+
+type RandomSource = () => number;
+
+interface Chromosome {
   order: readonly string[];
+  patterns: ReadonlyMap<string, SchedulingDayPattern>;
+}
+
+interface Member {
+  chromosome: Chromosome;
   solution: PlacedSession[];
   fitness: number;
+}
+
+interface DayLoad {
+  firstStart: number;
+  lastEnd: number;
+  teachingMinutes: number;
+  classCount: number;
+}
+
+function clampWeight(weight: number | undefined): number {
+  if (weight === undefined || !Number.isFinite(weight) || weight <= 0) {
+    return 0;
+  }
+  return Math.min(10, Math.floor(weight));
+}
+
+export function normalizeWeights(
+  weights: SoftConstraintWeights | undefined,
+): SoftConstraintWeights {
+  return {
+    workloadBalance: clampWeight(weights?.workloadBalance),
+    daySpread: clampWeight(weights?.daySpread),
+    gapMinimization: clampWeight(weights?.gapMinimization),
+  };
+}
+
+export function hasActiveConstraint(weights: SoftConstraintWeights): boolean {
+  return (
+    weights.workloadBalance > 0 ||
+    weights.daySpread > 0 ||
+    weights.gapMinimization > 0
+  );
+}
+
+/**
+ * The three penalties, measured independently of the weights so a score can be
+ * explained ("this schedule has 2 overload points and 3 idle hours").
+ */
+export function measurePenalties(
+  solution: readonly PlacedSession[],
+): GaPenalties {
+  const loadsByTeacher = new Map<string, Map<number, DayLoad>>();
+
+  for (const placement of solution) {
+    let byDay = loadsByTeacher.get(placement.teacherId);
+    if (!byDay) {
+      byDay = new Map();
+      loadsByTeacher.set(placement.teacherId, byDay);
+    }
+    const load = byDay.get(placement.dayIndex) ?? {
+      firstStart: Infinity,
+      lastEnd: -Infinity,
+      teachingMinutes: 0,
+      classCount: 0,
+    };
+    load.firstStart = Math.min(load.firstStart, placement.startMinutes);
+    load.lastEnd = Math.max(load.lastEnd, placement.endMinutes);
+    load.teachingMinutes +=
+      placement.endMinutes - placement.startMinutes;
+    load.classCount += 1;
+    byDay.set(placement.dayIndex, load);
+  }
+
+  let workloadBalance = 0;
+  let gapMinimization = 0;
+  let daySpread = 0;
+
+  for (const byDay of loadsByTeacher.values()) {
+    for (const load of byDay.values()) {
+      workloadBalance += Math.max(
+        0,
+        load.classCount - COMFORTABLE_CLASSES_PER_DAY,
+      );
+      const idleMinutes =
+        load.lastEnd - load.firstStart - load.teachingMinutes;
+      gapMinimization += Math.floor(idleMinutes / 60);
+    }
+    daySpread += Math.max(0, DAYS_IN_A_SCHOOL_WEEK - byDay.size);
+  }
+
+  return { workloadBalance, daySpread, gapMinimization };
+}
+
+function score(
+  penalties: GaPenalties,
+  weights: SoftConstraintWeights,
+): number {
+  return (
+    penalties.workloadBalance * weights.workloadBalance +
+    penalties.daySpread * weights.daySpread +
+    penalties.gapMinimization * weights.gapMinimization
+  );
 }
 
 export function runGA(
   input: SchedulingInput,
   seedSolution: readonly PlacedSession[],
   options: GaOptions = {},
-): PlacedSession[] {
+): GaResult {
   const seedCheck = validateSolution(input, seedSolution);
   if (!seedCheck.valid) {
     throw new Error(
@@ -54,40 +178,83 @@ export function runGA(
     );
   }
 
+  const weights = normalizeWeights(options.weights ?? NO_WEIGHTS);
+  const random = options.random ?? Math.random;
+  const seedPenalties = measurePenalties(seedSolution);
+  const seedFitness = score(seedPenalties, weights);
+
   const built = expandSubjectsIntoSessions(input);
-  if (
-    built.reason ||
-    built.reasons.length > 0 ||
-    built.domains.length === 0
-  ) {
-    return [...seedSolution];
+  if (built.reason || built.reasons.length > 0 || built.domains.length === 0) {
+    return {
+      schedule: [...seedSolution],
+      fitness: seedFitness,
+      penalties: seedPenalties,
+    };
   }
 
-  const seedPatternBySubject = new Map<string, SchedulingDayPattern>();
+  const domainBySubject = new Map(
+    built.domains.map((domain) => [domain.subject.id, domain]),
+  );
+
+  // The CSP's pattern is the gene's starting value: the GA starts from exactly
+  // what the CSP decided and only moves a subject to the other pattern when a
+  // soft constraint pays for it.
+  const seedPatterns = new Map<string, SchedulingDayPattern>();
   for (const placement of seedSolution) {
-    seedPatternBySubject.set(placement.subjectId, placement.dayPattern);
-  }
-
-  const units: SubjectUnit[] = [];
-  for (const domain of built.domains) {
-    const seedPattern = seedPatternBySubject.get(domain.subject.id);
-    const unit =
-      domain.options.find((option) => option.dayPattern === seedPattern) ??
-      domain.options[0];
-    if (unit) {
-      units.push(unit);
+    if (!seedPatterns.has(placement.subjectId)) {
+      seedPatterns.set(placement.subjectId, placement.dayPattern);
     }
   }
-  const unitKeys = units.map((unit) => unit.unitKey);
-  const unitByKey = new Map(units.map((unit) => [unit.unitKey, unit]));
+
+  const subjectIds = built.domains.map((domain) => domain.subject.id);
+  const seedChromosome: Chromosome = {
+    order: [...subjectIds],
+    patterns: seedPatterns,
+  };
 
   const populationSize = Math.max(4, options.populationSize ?? 24);
   const maxIterations = Math.max(1, options.maxIterations ?? 60);
 
-  function decodeOrder(order: readonly string[]): PlacedSession[] | null {
+  // A subject can only move to a pattern it actually has candidates for —
+  // otherwise the unit simply has no time to place and decode fails.
+  function otherPattern(
+    subjectId: string,
+    pattern: SchedulingDayPattern | undefined,
+  ): SchedulingDayPattern | null {
+    const domain = domainBySubject.get(subjectId);
+    if (!domain || domain.options.length < 2) {
+      return null;
+    }
+    const alternative = domain.options.find(
+      (option) => option.dayPattern !== pattern,
+    );
+    return alternative?.dayPattern ?? null;
+  }
+
+  function resolvePattern(
+    domain: SubjectDomain,
+    pattern: SchedulingDayPattern | undefined,
+  ): SchedulingDayPattern {
+    const option = domain.options.find(
+      (candidate) => candidate.dayPattern === pattern,
+    );
+    return option?.dayPattern ?? domain.options[0].dayPattern;
+  }
+
+  function decode(chromosome: Chromosome): PlacedSession[] | null {
     const orderedUnits: SubjectUnit[] = [];
-    for (const key of order) {
-      const unit = unitByKey.get(key);
+    for (const subjectId of chromosome.order) {
+      const domain = domainBySubject.get(subjectId);
+      if (!domain) {
+        return null;
+      }
+      const pattern = resolvePattern(
+        domain,
+        chromosome.patterns.get(subjectId),
+      );
+      const unit = domain.options.find(
+        (option) => option.dayPattern === pattern,
+      );
       if (!unit) {
         return null;
       }
@@ -96,111 +263,104 @@ export function runGA(
     return greedyDecode(orderedUnits);
   }
 
-  function evaluate(solution: readonly PlacedSession[]): number {
-    let penalty = 0;
-
-    const teacherDayStats = new Map<
-      string,
-      Map<number, { first: number; last: number; minutes: number; count: number }>
-    >();
-
-    for (const placement of solution) {
-      let stats = teacherDayStats.get(placement.teacherId);
-      if (!stats) {
-        stats = new Map();
-        teacherDayStats.set(placement.teacherId, stats);
-      }
-      const entry =
-        stats.get(placement.dayIndex) ??
-        { first: Infinity, last: -Infinity, minutes: 0, count: 0 };
-      entry.first = Math.min(entry.first, placement.startMinutes);
-      entry.last = Math.max(entry.last, placement.endMinutes);
-      entry.minutes += placement.endMinutes - placement.startMinutes;
-      entry.count += 1;
-      stats.set(placement.dayIndex, entry);
-    }
-
-    for (const stats of teacherDayStats.values()) {
-      for (const entry of stats.values()) {
-        const idleMinutes = entry.last - entry.first - entry.minutes;
-        penalty += Math.floor(idleMinutes / 60);
-        if (entry.count > 2) {
-          penalty += entry.count;
-        }
-      }
-    }
-
-    return penalty;
+  function makeMember(
+    chromosome: Chromosome,
+    solution: PlacedSession[],
+  ): Member {
+    return {
+      chromosome,
+      solution,
+      fitness: score(measurePenalties(solution), weights),
+    };
   }
 
-  const seedOrder = [...unitKeys];
+  // The CSP's schedule is the incumbent: valid, and the floor the search has
+  // to beat. It is never re-decoded, so no greedy failure can ever cost us it.
   let best: Member = {
-    order: seedOrder,
+    chromosome: seedChromosome,
     solution: [...seedSolution],
-    fitness: evaluate(seedSolution),
+    fitness: seedFitness,
   };
 
   let population: Member[] = [best];
   while (population.length < populationSize) {
-    const order = shuffled(unitKeys);
-    const decoded = decodeOrder(order);
-    const solution = decoded ?? best.solution;
-    population.push({
-      order,
-      solution,
-      fitness: evaluate(solution),
-    });
+    const order = shuffled(subjectIds, random);
+    const decoded = decode({ order, patterns: seedPatterns });
+    population.push(
+      decoded
+        ? makeMember({ order, patterns: seedPatterns }, decoded)
+        : best,
+    );
   }
 
   for (let generation = 0; generation < maxIterations; generation++) {
     const next: Member[] = [best];
     while (next.length < populationSize) {
-      const parentA = tournamentSelect(population);
-      const parentB = tournamentSelect(population);
-      let childOrder = orderCrossover(parentA.order, parentB.order);
-      if (Math.random() < 0.3) {
-        childOrder = mutateOrder(childOrder);
+      const parentA = tournamentSelect(population, random);
+      const parentB = tournamentSelect(population, random);
+      let childOrder = orderCrossover(
+        parentA.chromosome.order,
+        parentB.chromosome.order,
+        random,
+      );
+      if (random() < 0.5) {
+        childOrder = mutateOrder(childOrder, random);
       }
-      const decoded = decodeOrder(childOrder);
-      if (decoded) {
-        next.push({
-          order: childOrder,
-          solution: decoded,
-          fitness: evaluate(decoded),
-        });
-      } else {
-        next.push(best);
-      }
+      const childPatterns = patternCrossover(
+        parentA.chromosome.patterns,
+        parentB.chromosome.patterns,
+        subjectIds,
+        random,
+      );
+      const mutatedChild =
+        random() < 0.3
+          ? mutatePattern(childPatterns, subjectIds, otherPattern, random)
+          : childPatterns;
+
+      const chromosome: Chromosome = {
+        order: childOrder,
+        patterns: mutatedChild,
+      };
+      const decoded = decode(chromosome);
+      next.push(decoded ? makeMember(chromosome, decoded) : best);
     }
     population = next;
     best = population.reduce((a, b) => (b.fitness < a.fitness ? b : a));
   }
 
-  return [...best.solution];
+  return {
+    schedule: [...best.solution],
+    fitness: best.fitness,
+    penalties: measurePenalties(best.solution),
+  };
 }
 
-function shuffled<T>(source: readonly T[]): T[] {
+function shuffled<T>(source: readonly T[], random: RandomSource): T[] {
   const copy = [...source];
   for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(random() * (i + 1));
     [copy[i], copy[j]] = [copy[j], copy[i]];
   }
   return copy;
 }
 
-function tournamentSelect(population: readonly Member[]): Member {
-  const a = population[Math.floor(Math.random() * population.length)];
-  const b = population[Math.floor(Math.random() * population.length)];
+function tournamentSelect(
+  population: readonly Member[],
+  random: RandomSource,
+): Member {
+  const a = population[Math.floor(random() * population.length)];
+  const b = population[Math.floor(random() * population.length)];
   return b.fitness < a.fitness ? b : a;
 }
 
 function orderCrossover(
   parentA: readonly string[],
   parentB: readonly string[],
+  random: RandomSource,
 ): string[] {
   const size = parentA.length;
-  const firstIndex = Math.floor(Math.random() * size);
-  const secondIndex = Math.floor(Math.random() * size);
+  const firstIndex = Math.floor(random() * size);
+  const secondIndex = Math.floor(random() * size);
   const [from, to] =
     firstIndex <= secondIndex
       ? [firstIndex, secondIndex]
@@ -227,13 +387,61 @@ function orderCrossover(
   return child;
 }
 
-function mutateOrder(order: readonly string[]): string[] {
+function patternCrossover(
+  parentA: ReadonlyMap<string, SchedulingDayPattern>,
+  parentB: ReadonlyMap<string, SchedulingDayPattern>,
+  subjectIds: readonly string[],
+  random: RandomSource,
+): Map<string, SchedulingDayPattern> {
+  const child = new Map<string, SchedulingDayPattern>();
+  for (const subjectId of subjectIds) {
+    const fromA = parentA.get(subjectId);
+    const fromB = parentB.get(subjectId);
+    if (fromA === undefined) {
+      if (fromB !== undefined) {
+        child.set(subjectId, fromB);
+      }
+      continue;
+    }
+    child.set(
+      subjectId,
+      random() < 0.5 || fromB === undefined ? fromA : fromB,
+    );
+  }
+  return child;
+}
+
+function mutateOrder(order: readonly string[], random: RandomSource): string[] {
   const copy = [...order];
-  const i = Math.floor(Math.random() * copy.length);
-  let j = Math.floor(Math.random() * copy.length);
+  // A single-subject schedule has one permutation; swapping it with itself is
+  // not an option, so there is nothing to mutate.
+  if (copy.length < 2) {
+    return copy;
+  }
+  const i = Math.floor(random() * copy.length);
+  let j = Math.floor(random() * copy.length);
   while (j === i) {
-    j = Math.floor(Math.random() * copy.length);
+    j = Math.floor(random() * copy.length);
   }
   [copy[i], copy[j]] = [copy[j], copy[i]];
   return copy;
 }
+
+function mutatePattern(
+  patterns: ReadonlyMap<string, SchedulingDayPattern>,
+  subjectIds: readonly string[],
+  otherPattern: (
+    subjectId: string,
+    pattern: SchedulingDayPattern | undefined,
+  ) => SchedulingDayPattern | null,
+  random: RandomSource,
+): Map<string, SchedulingDayPattern> {
+  const copy = new Map(patterns);
+  const subjectId = subjectIds[Math.floor(random() * subjectIds.length)];
+  const alternative = otherPattern(subjectId, copy.get(subjectId));
+  if (alternative) {
+    copy.set(subjectId, alternative);
+  }
+  return copy;
+}
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            

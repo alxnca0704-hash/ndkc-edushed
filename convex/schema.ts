@@ -1,6 +1,11 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+const softConstraintValidator = v.object({
+  enabled: v.boolean(),
+  weight: v.number(),
+});
+
 export default defineSchema({
   users: defineTable({
     clerkId: v.string(),
@@ -58,4 +63,14 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_teacherId", ["teacherId"]),
+  // The Dean's soft-constraint weights. Single-tenant prototype, so this table
+  // holds exactly one row; the keys mirror `SoftConstraintWeights` in the
+  // scheduling engine.
+  scheduleSettings: defineTable({
+    workloadBalance: softConstraintValidator,
+    daySpread: softConstraintValidator,
+    gapMinimization: softConstraintValidator,
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }),
 });
