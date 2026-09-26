@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/tooltip";
 import { formatClock } from "@/constants/availability";
 import { scheduleGridBlockWidth, scheduleGridTracks } from "@/lib/schedule";
+import { subjectPaletteClasses } from "@/lib/subject-colors";
 import { cn } from "@/lib/utils";
 import type {
   ScheduleGrid as ScheduleGridModel,
@@ -39,15 +40,15 @@ function ariaLabel(block: ScheduleGridBlock): string {
  * constraint means two different courses (or years) at once; a week with no
  * overlaps is simply two equal columns.
  *
- * Blocks are green, not neutral and not per-teacher. The timetable is the one
- * surface on the page that is a table of real classes, and a `bg-card` block on
- * a white page was effectively invisible; the green wash on the day-pair
- * columns, the hour hairlines and the cards' own shadow make the structure and
- * the block boundaries readable without a border around every cell. The hue is
- * the app's existing green (hue 152), so this tints the timetable rather than
- * introducing a second green. The palette-per-teacher scheme is gone: color was
- * a second identity system next to the text, and it collided past eight
- * teachers anyway.
+ * Blocks are colored by **subject**, not by teacher and not by a flat green: the
+ * palette is the schedule's one identity system, and a subject's color is the
+ * same token on the Dean's card and the Teacher's, because both read the one
+ * `subjectColor` field the generated row already carries. The cards are lifted
+ * off the column with a shadow, so a card keeps a readable edge against whatever
+ * color it is without a border around every cell, and the day-pair wash and hour
+ * rules behind them stay neutral so they never compete with the colors they sit
+ * under. The legend in `SubjectColorLegend` is the key, and the subject name is
+ * printed on the card and in the tooltip, so color is never the only channel.
  *
  * The header, the three background layers and the body are one grid, not
  * several stacked ones, so a time label cannot drift out of line with the
@@ -147,6 +148,9 @@ export function ScheduleGrid({ grid, className }: ScheduleGridProps) {
                 // One lane per block; only a block alone in its cluster takes
                 // its day pair's full width. See `scheduleGridBlockWidth`.
                 const width = scheduleGridBlockWidth(block, laneCount);
+                // One lookup per block, off the same token the legend reads, so a
+                // card and its swatch cannot disagree.
+                const palette = subjectPaletteClasses(block.subjectColor);
 
                 return (
                   <Tooltip key={block.key}>
@@ -158,19 +162,32 @@ export function ScheduleGrid({ grid, className }: ScheduleGridProps) {
                         } / span ${width}`,
                       }}
                       aria-label={ariaLabel(block)}
-                      className="m-1 flex flex-col items-start gap-0.5 overflow-hidden rounded-lg bg-schedule-card p-1.5 text-left text-schedule-card-foreground shadow-sm transition-shadow hover:shadow-md"
+                      className={cn(
+                        "m-1 flex flex-col items-start gap-0.5 overflow-hidden rounded-lg p-1.5 text-left shadow-sm transition-shadow hover:shadow-md",
+                        palette.card,
+                      )}
                     >
                       <span className="truncate text-xs font-medium sm:text-sm">
                         {block.subjectName}
                       </span>
-                      <span className="truncate text-[0.6875rem] text-schedule-card-muted sm:text-xs">
+                      <span
+                        className={cn(
+                          "truncate text-[0.6875rem] sm:text-xs",
+                          palette.muted,
+                        )}
+                      >
                         {block.teacherName}
                       </span>
                       {/* A single-slot block only has room for two lines, so the
                           room is left to the tooltip and the aria-label rather
                           than clipped to a sliver. Taller blocks show it. */}
                       {block.span > 1 ? (
-                        <span className="truncate text-[0.6875rem] text-schedule-card-muted sm:text-xs">
+                        <span
+                          className={cn(
+                            "truncate text-[0.6875rem] sm:text-xs",
+                            palette.muted,
+                          )}
+                        >
                           {block.roomName}
                         </span>
                       ) : null}

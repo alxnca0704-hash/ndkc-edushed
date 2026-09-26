@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useState, type FormEvent } from "react";
-import { Plus, Save } from "lucide-react";
+import { Check, Plus, Save } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -15,6 +15,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -26,8 +32,17 @@ import {
   SUBJECT_YEAR_LEVELS,
 } from "@/constants/courses";
 import { ROOM_TYPE_LABELS } from "@/constants/rooms";
+import {
+  SUBJECT_COLOR_LABELS,
+  SUBJECT_COLOR_TOKENS,
+  asSubjectColorToken,
+  subjectColorTokenForName,
+  type SubjectColorToken,
+} from "@/constants/subjectColors";
 import { errorMessage } from "@/lib/result";
+import { subjectPaletteClasses } from "@/lib/subject-colors";
 import { subjectFormSchema } from "@/lib/validation/subject";
+import { cn } from "@/lib/utils";
 import type { SubjectYearLevel } from "@/types/course";
 import type {
   SubjectFormValues,
@@ -71,6 +86,14 @@ export function SubjectFormDialog({
   const [teacherId, setTeacherId] = useState<string | null>(
     subject?.teacherId ?? null,
   );
+  // The color the Dean picked, and whether they have picked one at all. Until
+  // they do, it follows the name — the same hash the create mutation applies —
+  // so the swatch previews what will actually be stored instead of showing a
+  // blank the Dean has to think about.
+  const [pickedColor, setPickedColor] = useState<SubjectColorToken | null>(
+    subject ? asSubjectColorToken(subject.color) : null,
+  );
+  const [isColorOpen, setIsColorOpen] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -79,6 +102,7 @@ export function SubjectFormDialog({
   const noTeachers = teachers.length === 0;
   const noRooms = rooms.length === 0;
   const noCourses = courses.length === 0;
+  const color = pickedColor ?? subjectColorTokenForName(name);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -90,6 +114,7 @@ export function SubjectFormDialog({
       courseId: courseId ?? "",
       year: year ?? "",
       teacherId: teacherId ?? "",
+      color,
     });
 
     if (!parsed.success) {
@@ -308,6 +333,69 @@ export function SubjectFormDialog({
             {fieldErrors.teacherId ? (
               <p className="text-xs text-destructive">{fieldErrors.teacherId}</p>
             ) : null}
+          </div>
+
+          <div className="grid gap-2">
+            <Label id={`${formId}-color-label`}>Color</Label>
+            <Popover
+              open={isColorOpen}
+              onOpenChange={setIsColorOpen}
+            >
+              <PopoverTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    role="combobox"
+                    aria-labelledby={`${formId}-color-label`}
+                    className="w-full justify-start gap-2"
+                  />
+                }
+              >
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "size-3.5 shrink-0 rounded-full",
+                    subjectPaletteClasses(color).dot,
+                  )}
+                />
+                {SUBJECT_COLOR_LABELS[color]}
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-(--width)">
+                <PopoverTitle className="px-1 text-xs font-normal text-muted-foreground">
+                  Color
+                </PopoverTitle>
+                {/* Ten swatches, one per palette token. The label is on the
+                    trigger rather than each swatch, so the grid stays a grid of
+                    colors instead of a grid of words; the pick itself is a
+                    button with its own accessible name. */}
+                <div className="grid grid-cols-5 gap-1.5">
+                  {SUBJECT_COLOR_TOKENS.map((token) => (
+                    <button
+                      key={token}
+                      type="button"
+                      aria-label={SUBJECT_COLOR_LABELS[token]}
+                      aria-pressed={token === color}
+                      onClick={() => {
+                        setPickedColor(token);
+                        setIsColorOpen(false);
+                      }}
+                      className={cn(
+                        "flex size-9 items-center justify-center rounded-lg ring-1 ring-foreground/10 transition-shadow hover:shadow-sm",
+                        subjectPaletteClasses(token).card,
+                        token === color && "ring-2 ring-foreground/70",
+                      )}
+                    >
+                      {token === color ? <Check className="size-4" /> : null}
+                    </button>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+            <p className="text-xs text-muted-foreground">
+              Painted on this subject&apos;s classes in the generated schedule.
+              Left alone, it follows the subject name.
+            </p>
           </div>
 
           {submitError ? (

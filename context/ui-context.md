@@ -70,14 +70,14 @@ built by `buildScheduleGrid` in `lib/schedule.ts` and rendered by
 | Frame           | `rounded-xl border border-border/60 bg-card/40 p-2` on the scroll viewport, so the border stays put while the grid scrolls inside it |
 | Columns         | Exactly two, from `DAY_PATTERN_OPTIONS`: MW, then TTh                   |
 | Column width    | **Both day pairs are always the same width.** Every column renders `max(laneCount)` lanes, the widest in the week |
-| Column surface  | `bg-schedule-column` — a green wash over the whole day pair, header included |
+| Column surface  | `bg-schedule-column` — a neutral wash over the whole day pair, header included |
 | Column header   | Day-pattern label + its label from `dayPatterns`, spanning the uniform lane count |
 | Rows            | One per `AVAILABILITY_TIME_SLOTS` entry — 12 rows, 7:30 AM to 6:30 PM   |
 | Row height      | `var(--schedule-row-height)`: `3.5rem`, `4rem` at `>= 40rem` — uniform, so a class is `duration × 1 cell` |
 | Row rule        | `border-t border-schedule-rule/70` per row, painted under the blocks. Without it an empty hour is indistinguishable from the next one |
 | Time gutter     | `TIME_GUTTER` (`3.25rem`) leading column, shared by header and body so they line up |
 | Lane width      | `LANE_MIN` (`7rem`) floor; a 2-lane column is two of these, an unsplit one is one wider `1fr` track |
-| Class card      | `bg-schedule-card` with `shadow-sm`, `shadow-md` on hover |
+| Class card      | `bg-subject-*-surface` from the subject's palette slot, with `shadow-sm`, `shadow-md` on hover |
 | Card padding    | `p-1.5` — tight, because the row height is sized to the content, not the other way round |
 | Card contents   | Subject + teacher always; the room line renders only when `block.span > 1`, so a 60-minute class never clips. The tooltip and `aria-label` always carry the full detail |
 | Empty cell      | Nothing — no card, no placeholder, no "N/A". The day-pair wash and the row rule carry the structure |
@@ -105,36 +105,61 @@ two equal columns of boxes.
 
 ## Schedule Colors
 
-The timetable is **green**, and it is the one place on the page where color
-carries meaning. A neutral `bg-card` block on a white page was effectively
-invisible, which is what "make the schedule visible" meant.
+The timetable is the one place on the page where color **carries meaning**, and
+what it means is **the subject**. A class card is painted in its subject's
+color, so a Dean's week and a Teacher's week read as the same set of subjects at
+a glance, and the two views can never disagree — both read the one
+`subjectColor` field the generated `schedules` row already carries.
 
-Four steps, all hue 152 — the app's existing green (`--accent-primary`,
-`--sidebar-accent`), so this tints the timetable rather than introducing a second
-green:
+**The palette is ten muted slots, stored as token names, never hex.**
 
-| Token                       | Role                                          |
-| --------------------------- | --------------------------------------------- |
-| `--schedule-column`         | The day-pair wash behind everything            |
-| `--schedule-rule`           | The hour hairline across the day pairs         |
-| `--schedule-card`           | The class block surface                        |
-| `--schedule-card-foreground`| Subject name on a block                        |
-| `--schedule-card-muted`     | Teacher and room line on a block               |
+| Token              | | Token               | |
+| ------------------ |-| ------------------- | -|
+| `subject-green`    | | `subject-violet`   | |
+| `subject-olive`    | | `subject-indigo`   | |
+| `subject-amber`    | | `subject-sky`      | |
+| `subject-rose`     | | `subject-teal`     | |
+| `subject-magenta`  | | `subject-slate`    | |
 
-Each has a light and a dark value in `app/globals.css`, registered in
-`@theme inline` so `bg-schedule-*` / `text-schedule-*` / `border-schedule-*`
-resolve. Use the tokens, never a literal green.
+Each slot is a **triple**, not one flat color, and each part has a light and a
+dark value in `app/globals.css`, registered in `@theme inline`:
+
+| Token                              | Role                                       |
+| ---------------------------------- | ------------------------------------------ |
+| `--color-subject-*-surface`        | The class card background — the wash       |
+| `--color-subject-*-foreground`     | The subject name on the card               |
+| `--color-subject-*-muted`          | The teacher and room lines, and the dot    |
+
+Use them through `subjectPaletteClasses(token)` in `lib/subject-colors.ts`,
+which returns `{ card, muted, dot }` as **complete literal class strings** so
+Tailwind can see them. Never interpolate a class name from the token.
+
+**Every color on a schedule card means "subject."** The structure around the
+cards is neutral, on purpose: `--schedule-column` and `--schedule-rule` are
+greys, not a green wash, because a colored column behind colored cards gave two
+things the same visual weight and made a green day-pair look like a subject.
+
+**Legend.** `components/schedule/SubjectColorLegend.tsx` renders
+`ScheduleGrid.subjects` — one swatch + name + class count per subject, sorted by
+name. Both pages render it above the grid and both feed it the same field, so a
+swatch cannot drift from the cards. The subject name is always printed beside
+the swatch, and on the card itself, so color is never the only channel. The
+Dean's copy lists the subjects in the selected Course + Year and the Teacher's
+lists their own, because each hook builds its grid from only the sessions that
+view may see.
+
+**Choosing a color.** The Subject form has a `Popover` of the ten swatches.
+Until the Dean picks one, the swatch follows `subjectColorTokenForName(name)` —
+an FNV-1a hash of the trimmed, case-folded name — which is the *same* hash the
+create mutation applies, so the preview is what will be stored. Editing a subject
+keeps its stored color. A name that hashes to a slot another subject already
+holds is fine: the colors are chosen to be separable, and the legend and the
+picker make an identical pair harmless rather than pretending it doesn't happen.
 
 **Cards are separated by shadow, not by border.** `shadow-sm` normally and
 `shadow-md` on hover: it is one declaration instead of a border color that has to
-stay legible against three different surfaces, and it survives a card growing to
+stay legible against ten different surfaces, and it survives a card growing to
 two or three rows tall.
-
-Blocks are deliberately **not** color-coded per teacher. The per-teacher palette
-(`constants/teacherColors.ts`, the `--teacher-palette-*` tokens) was removed:
-color was a second identity system competing with the text on a grid this dense,
-and the eight hashed slots collided past eight teachers anyway. The teacher is
-named in text on the card, and the tooltip carries the full detail.
 
 The grid is deliberately inert: no drag, no editing. Manual schedule
 editing is Out of Scope, and conflict validation belongs to the engine,

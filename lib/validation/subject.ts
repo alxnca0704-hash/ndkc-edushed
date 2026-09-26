@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { SUBJECT_YEAR_LEVELS } from "@/constants/courses";
+import { SUBJECT_COLOR_TOKENS } from "@/constants/subjectColors";
 
 export const subjectFormSchema = z.object({
   name: z
@@ -19,6 +20,7 @@ export const subjectFormSchema = z.object({
     .number()
     .pipe(z.literal(SUBJECT_YEAR_LEVELS, "Choose a year level")),
   teacherId: z.string().min(1, "Assign a teacher"),
+  color: z.enum(SUBJECT_COLOR_TOKENS),
 });
 
 export type SubjectFormSchema = z.infer<typeof subjectFormSchema>;

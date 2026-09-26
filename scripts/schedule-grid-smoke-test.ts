@@ -4,6 +4,11 @@ import {
   scheduleGridTracks,
 } from "../lib/schedule";
 import { AVAILABILITY_START_MINUTES } from "../constants/availability";
+import {
+  DEFAULT_SUBJECT_COLOR_TOKEN,
+  SUBJECT_COLOR_TOKENS,
+  subjectColorTokenForName,
+} from "../constants/subjectColors";
 import type { ScheduleSession } from "../types/schedule";
 
 /**
@@ -38,6 +43,7 @@ function session(
     _id: `row_${nextId}`,
     subjectId: `subject_${nextId}`,
     subjectName: `Subject ${nextId}`,
+    subjectColor: "subject-green",
     courseId: "course_bscs",
     courseCode: "BSCS",
     courseName: "BS Computer Science",
@@ -83,11 +89,13 @@ function linkedPair(
   subjectName: string,
   roomId: string,
   startMinutes = HALF_PAST_SEVEN,
+  subjectColor: string = "subject-green",
 ) {
   const pair = (dayIndex: number) =>
     session({
       subjectId,
       subjectName,
+      subjectColor,
       roomId,
       roomName: roomId === "room_it_lab_1" ? "IT Lab 1" : "IT Lab 3",
       startMinutes,
@@ -591,6 +599,171 @@ function testTrackLayout(): void {
   );
 }
 
+function testSubjectColorsReachTheGrid(): void {
+  console.log("subject colors");
+  const grid = buildScheduleGrid([
+    ...linkedPair(
+      "se",
+      "SE 101",
+      "room_it_lab_1",
+      HALF_PAST_SEVEN,
+      "subject-rose",
+    ),
+    // The same subject on the other day pair — two classes, so two blocks that
+    // still have to agree on the color.
+    session({
+      subjectId: "se",
+      subjectName: "SE 101",
+      subjectColor: "subject-rose",
+      dayPattern: "TTh",
+      dayIndex: 1,
+      startMinutes: 13 * 60 + 30,
+      endMinutes: 14 * 60 + 30,
+    }),
+    session({
+      subjectId: "os",
+      subjectName: "OS 101",
+      subjectColor: "subject-sky",
+      startMinutes: 13 * 60 + 30,
+      endMinutes: 14 * 60 + 30,
+    }),
+  ]);
+  const blocks = blocksOf(grid);
+
+  check(
+    blocks.every((block) =>
+      block.subjectColor ===
+      (block.subjectName === "SE 101" ? "subject-rose" : "subject-sky"),
+    ),
+    "every block is drawn in its own subject's color",
+    blocks.map((block) => `${block.subjectName}:${block.subjectColor}`).join(", "),
+  );
+  check(
+    blocks.filter((block) => block.subjectName === "SE 101").length === 2,
+    "a subject on both day pairs is two blocks",
+    `${blocks.length} blocks`,
+  );
+  check(
+    new Set(
+      blocks
+        .filter((block) => block.subjectName === "OS 101")
+        .map((block) => block.subjectColor),
+    ).size === 1 &&
+      blocks.find((block) => block.subjectName === "OS 101")?.subjectColor ===
+        "subject-sky",
+    "a second subject keeps its own color",
+  );
+
+  // The legend reads the same field off the same blocks, so it cannot disagree
+  // with the picture above it.
+  check(
+    grid.subjects.length === 2,
+    "the legend lists one entry per subject in the grid",
+    grid.subjects.map((subject) => subject.name).join(", "),
+  );
+  check(
+    grid.subjects.every(
+      (subject) => subject.color === (subject.name === "SE 101" ? "subject-rose" : "subject-sky"),
+    ),
+    "each entry carries the color its cards are drawn in",
+    grid.subjects.map((subject) => `${subject.name}:${subject.color}`).join(", "),
+  );
+  check(
+    grid.subjects.find((subject) => subject.name === "SE 101")?.classCount === 2,
+    "and how many of its classes are on screen",
+    `${grid.subjects.find((subject) => subject.name === "SE 101")?.classCount}`,
+  );
+  check(
+    grid.subjects.map((subject) => subject.name).join(",") === "OS 101,SE 101",
+    "the legend is in name order, so a regenerate cannot reshuffle it",
+    grid.subjects.map((subject) => subject.name).join(","),
+  );
+}
+
+function testUnknownSubjectColorFallsBack(): void {
+  console.log("unknown subject color");
+  const grid = buildScheduleGrid([
+    // A row generated before subjects had colors …
+    session({
+      subjectId: "legacy",
+      subjectName: "Legacy",
+      subjectColor: undefined as unknown as string,
+      startMinutes: HALF_PAST_SEVEN,
+      endMinutes: HALF_PAST_SEVEN + 60,
+    }),
+    // … and one holding a token the palette has since dropped.
+    session({
+      subjectId: "stale",
+      subjectName: "Stale",
+      subjectColor: "subject-chartreuse",
+      startMinutes: 9 * 60 + 30,
+      endMinutes: 10 * 60 + 30,
+    }),
+  ]);
+  const blocks = blocksOf(grid);
+
+  check(
+    blocks.length === 2,
+    "both are still placed",
+    `${blocks.length}`,
+  );
+  check(
+    blocks.every((block) => block.subjectColor === DEFAULT_SUBJECT_COLOR_TOKEN),
+    "and both fall back to the default token rather than rendering colorless",
+    blocks.map((block) => block.subjectColor).join(","),
+  );
+  check(
+    grid.subjects.every((subject) => subject.color === DEFAULT_SUBJECT_COLOR_TOKEN),
+    "the legend falls back the same way",
+    grid.subjects.map((subject) => subject.color).join(","),
+  );
+}
+
+/**
+ * The regression the subject palette exists to prevent: one color for the whole
+ * timetable. Real subject names must land on several different slots, and the
+ * slot a name resolves to must not move.
+ */
+function testDefaultColorAssignment(): void {
+  console.log("default color assignment");
+  const names = [
+    "CC 106",
+    "HCI 101",
+    "OS 101",
+    "SE 101",
+    "PROG 101",
+    "DB 201",
+    "WEB 202",
+    "ALGO 301",
+    "IT 101",
+  ];
+  const tokens = names.map(subjectColorTokenForName);
+
+  check(
+    tokens.every((token) => (SUBJECT_COLOR_TOKENS as readonly string[]).includes(token)),
+    "every default is a real palette token",
+    tokens.join(","),
+  );
+  check(
+    new Set(tokens).size >= 5,
+    "the dev seed's subjects do not all land on one slot",
+    `${new Set(tokens).size} of ${names.length} distinct: ${tokens.join(",")}`,
+  );
+  check(
+    subjectColorTokenForName("OS 101") === subjectColorTokenForName("OS 101"),
+    "the same name always resolves to the same slot",
+  );
+  check(
+    subjectColorTokenForName("  os 101 ") === subjectColorTokenForName("OS 101"),
+    "case and stray whitespace do not move it, or the form's preview would lie",
+  );
+  check(
+    subjectColorTokenForName("OS 101") !==
+      subjectColorTokenForName("HCI 101"),
+    "different subjects are not pinned to one slot",
+  );
+}
+
 function main(): void {
   testLinkedPairIsOneBlock();
   testColumnsAndRows();
@@ -604,6 +777,9 @@ function main(): void {
   testUnplaceableSessionsAreDropped();
   testEmptyGrid();
   testDevWeekMirror();
+  testSubjectColorsReachTheGrid();
+  testUnknownSubjectColorFallsBack();
+  testDefaultColorAssignment();
 
   console.log(
     failures === 0

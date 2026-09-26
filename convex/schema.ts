@@ -35,6 +35,21 @@ export default defineSchema({
     courseId: v.id("courses"),
     year: v.union(v.literal(1), v.literal(2), v.literal(3), v.literal(4)),
     teacherId: v.string(),
+    // A palette token name from `constants/subjectColors.ts`
+    // (`SUBJECT_COLOR_TOKENS`), never a raw hex: the app owns the palette, so a
+    // subject can be recolored wholesale without touching stored data. A
+    // `v.string()` rather than a literal union because the mutation validates it
+    // against the vocabulary and a token dropped from the palette must not make
+    // a stored doc unreadable.
+    //
+    // Optional in the schema, always present in practice. Convex validates every
+    // existing document against a new schema *at push time*, so a required field
+    // here would deadlock: the subjects that need a color can only get one from
+    // a backfill that ships in the same push as this line. `subjects.create`,
+    // `subjects.update` and `migrations:backfillSubjectColors` write it, and
+    // `resolveColor` turns a missing or unrecognised value into a deterministic
+    // default, so no read path can observe "no color".
+    color: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_teacherId", ["teacherId"]).index("by_courseId", ["courseId"]),
@@ -47,6 +62,15 @@ export default defineSchema({
   schedules: defineTable({
     subjectId: v.id("subjects"),
     subjectName: v.string(),
+    // The subject's palette token, snapshotted here at generation time exactly
+    // like its course/year, so neither schedule view has to re-read the
+    // `subjects` table to know a class's color — and so the Dean and the
+    // Teacher can only ever be looking at the same color for the same subject.
+    // Optional for the same push-time reason as `subjects.color`; `generate`
+    // always writes it and `migrations:backfillScheduleSubjectColor` fills the
+    // rows that predate it, while `asSubjectColorToken` in the app layer makes a
+    // missing value impossible to see.
+    subjectColor: v.optional(v.string()),
     courseId: v.id("courses"),
     courseCode: v.string(),
     courseName: v.string(),

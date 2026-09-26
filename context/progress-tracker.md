@@ -5,56 +5,137 @@ change.
 
 ## Current Phase
 
-Complete — the schedule is now a grid rather than a table, for both roles
-(spec 12), and the engine has a fourth hard constraint. `/dean/schedule` and
-`/teacher/schedule` render the same `ScheduleGrid`: exactly two columns
-(MW — Mon & Wed, then TTh — Tue & Thu) and one row per
-`AVAILABILITY_TIME_SLOTS` entry (12 rows, 7:30 AM to 6:30 PM), with a class
-spanning the rows it occupies. All the geometry lives in one pure function,
-`buildScheduleGrid` in `lib/schedule.ts`, so the two pages cannot drift and the
-shape is testable without a browser. The four old table components (Dean's and
-the Teacher's, plus their skeletons) are gone, and `ui-context.md` records the
-grid and its colors.
+Complete — the schedule is a grid rather than a table, for both roles
+(spec 12), it has a fourth hard constraint, and its cards are now **colored by
+subject**. `/dean/schedule` and `/teacher/schedule` render the same
+`ScheduleGrid`: exactly two columns (MW — Mon & Wed, then TTh — Tue & Thu) and
+one row per `AVAILABILITY_TIME_SLOTS` entry (12 rows, 7:30 AM to 6:30 PM), with a
+class spanning the rows it occupies. All the geometry lives in one pure
+function, `buildScheduleGrid` in `lib/schedule.ts`, so the two pages cannot
+drift and the shape is testable without a browser. The four old table components
+(Dean's and the Teacher's, plus their skeletons) are gone, and `ui-context.md`
+records the grid and its colors.
 
-Three follow-up units landed after spec 12: a visual pass on the grid (lane
-geometry, tooltip, density) and the **course/year hard constraint** —
-two subjects sharing both `courseId` and `year` can never be in a lesson at the
-same time; then the **uniform box matrix** — every day pair renders the widest
-lane count, so MW and TTh are always the same width, and the per-teacher color
-assignment was removed. A final pass made the grid **visible and green**:
-a neutral `bg-card` block on a white page was effectively invisible, so the
-day pairs are washed, the hours are ruled, the cards are green and lifted off
-the page with a shadow, and `scheduleGridBlockWidth` now takes the rendered lane
-count so a lone class fills its column. Verified with `tsc`, `lint`, `build`,
-the engine smoke test (111 assertions) and `scripts/schedule-grid-smoke-test.ts`
-(61 assertions). Browser verification is still outstanding — see Next Up.
+The three follow-up units after spec 12 were: a visual pass on the grid (lane
+geometry, tooltip, density); the **course/year hard constraint** — two subjects
+sharing both `courseId` and `year` can never be in a lesson at the same time;
+and the **uniform box matrix**, so MW and TTh are always the same width. A
+final pass made the grid *visible* (a neutral `bg-card` block on a white page
+was effectively invisible) by washing the day pairs, ruling the hours and
+lifting the cards off the page with a shadow.
+
+The last pass then made the color mean something: **every card is painted in its
+subject's color**, from a ten-slot muted palette (`constants/subjectColors.ts`),
+with a legend above both grids. That pass removed the flat green and the
+per-teacher palette together, and neutralized `--schedule-column` /
+`--schedule-rule` — because once a card's color means "subject," a green
+day-pair wash behind it reads as a second subject. See Completed for the storage
+and migration story. Verified with `tsc`, `lint`, `build`, the engine smoke test
+(111 assertions) and `scripts/schedule-grid-smoke-test.ts` (76 assertions).
+Browser verification is still outstanding — see Next Up.
 
 ## Current Goal
 
 Shipped (see Completed). Remaining follow-up: eyeball it in the browser.
-Nothing is visible from the command line that matters most here, and three
+Nothing is visible from the command line that matters most here, and four
 things in particular can't be proven by the type checker or a smoke test:
+- **The ten hues together.** The palette was chosen as ten muted triples from the
+  app's own token families, not by looking at them side by side. Check that no
+  two slots are hard to tell apart at card size (a 7rem × 3.5rem block), in
+  **both** light and dark mode, and that `--color-subject-*-muted` (the teacher
+  and room lines) stays legible on its own `--color-subject-*-surface`.
 - **Overlapping classes.** The dev week has no overlap (one teacher owns all
   four labs, and the CSP forbids them double-booking), so the sub-column
   split — the part most likely to look wrong — has never rendered. Force it by
   giving two subjects *different* teachers at the same time in different rooms
   and same-year, and regenerating. (Same `courseId` + `year` can no longer
-  overlap at all — that is the new hard constraint.)
+  overlap at all — that is the hard constraint.) Two subjects on **different**
+  years overlapping in time is the case the palette exists for; two blocks in
+  one lane, in two different colors, is exactly what needs to look right.
+- **The picker.** Open the Subject form on `/dean/subjects` and check the
+  popover: the swatch on the trigger follows the name until a color is picked,
+  the picked swatch gets a ring, and a name hash change doesn't make the
+  preview jump around. Then create a subject, pick a color, generate, and confirm
+  the card on both `/dean/schedule` and `/teacher/schedule` is that color and
+  the legend lists it.
 - **Card density.** A 60-minute class is 3.5rem tall and shows subject +
   teacher only; the room is in the tooltip. A 2-hour class shows all three
   lines. Check the 1-line-to-3-line transition doesn't look accidental.
-- **The green on screen.** The grid is green in four steps (day-pair wash, hour
-  rule, card surface, muted card ink), all hue 152, and cards are separated by
-  `shadow-sm`/`shadow-md` rather than a border. Check legibility in **both**
-  light and dark mode - especially `--schedule-card-muted` (the teacher line)
-  against `--schedule-card`, and that the shadow still reads when a card
-  spans three rows.
 
-Also worth a look: a 3-hour class's text at the narrow mobile width, and the
-12-row grid at 7:30 AM and 6:30 PM with an empty first/last slot.
+Also worth a look: the legend wrapping to two lines in the Dean's Course + Year
+view (four to five subjects), a 3-hour class's text at the narrow mobile width,
+and the 12-row grid at 7:30 AM and 6:30 PM with an empty first/last slot.
 
 
 ## Completed
+
+- **Class cards are colored by subject** — a ten-slot muted palette, chosen in
+  the Subject form, drawn on both grids with a legend.
+  - **The palette.** `constants/subjectColors.ts` holds ten tokens — `subject-
+    green`, `olive`, `amber`, `rose`, `magenta`, `violet`, `indigo`, `sky`,
+    `teal`, `slate` — each a **triple** in `app/globals.css`
+    (`--color-subject-*-surface` / `-foreground` / `-muted`, light and dark,
+    registered in `@theme inline`), not one flat color: the card wash, the
+    subject name, and the teacher/room lines have to move together or a card
+    stops being readable. `lib/subject-colors.ts` maps a token to
+    `{ card, muted, dot }` as **complete literal class strings**, because
+    Tailwind cannot see a class assembled from a variable. The tokens are the
+    *only* thing stored — recoloring a subject is a change to the token's CSS,
+    not to stored data.
+  - **Storage.** `subjects.color` and `schedules.subjectColor`, both
+    `v.optional(v.string())` — see the deployment note below — and
+    `generate` snapshots the token onto each row exactly as it does course and
+    year, so the Dean and the Teacher read one field and cannot disagree.
+  - **The palette is optional and the default is deterministic.**
+    `subjectColorTokenForName` is an FNV-1a hash of the trimmed, case-folded
+    name; the form uses the *same* function for its preview, so the swatch
+    before a pick is the color that gets stored. `subjects:update` preserves an
+    existing color when the Dean says nothing about it, so editing a name or a
+    room can't move a subject off the color every generated schedule has been
+    drawn in. Hashing the *name* rather than the id keeps the form's preview
+    honest; the cost is that two names can land on the same slot, which the
+    legend and the picker make harmless rather than pretending can't happen.
+  - **Picking.** A `Popover` of the ten swatches in `SubjectFormDialog`
+    (installed with the shadcn CLI, not hand-written), and a color dot in the
+    `SubjectManagement` table so a subject's color is visible before anything is
+    generated.
+  - **Legend.** `components/schedule/SubjectColorLegend.tsx` renders
+    `ScheduleGrid.subjects` — swatch, name and class count, sorted by name so a
+    regenerate can't reshuffle it. Both pages render it above the grid. It is
+    derived from the *blocks*, not the sessions, so it names exactly the
+    subjects on screen: the Dean's list is the selected Course + Year, the
+    Teacher's is their own classes.
+  - **The flat green is gone, and the structure went neutral with it.**
+    `--schedule-card{,-foreground,-muted}` were removed and
+    `--schedule-column` / `--schedule-rule` are greys: once a card's color means
+    "subject", a green day-pair wash behind it reads as a second subject, and
+    green cards on a green page were the thing being replaced.
+  - **Both color fields are `v.optional` in the schema — a deployment
+    constraint, not indecision.** Convex validates every existing document
+    against a new schema *at push time*, so `subjectColor: v.string()` could
+    never deploy: the 12 existing rows fail validation, and the backfill that
+    would fix them ships in the same push. The push failed exactly that way.
+    Optionality is confined to storage — the write paths always write a token,
+    `migrations:backfillSubjectColors` (6 subjects) and
+    `migrations:backfillScheduleSubjectColor` (12 rows, 0 skipped) filled the
+    rest, and both read paths normalize with `asSubjectColorToken`, so
+    `Subject.color` and `ScheduleSession.subjectColor` stay non-optional
+    `string`s and no component can see a missing color.
+  - **Spec 12's "Color = Teacher" is superseded.** The spec still asks for
+    per-teacher cells, a `--teacher-palette` token set and a teacher legend; the
+    flat green pass already contradicted it and this one removes the subject of
+    the disagreement. The spec is left as the historical record — `ui-context.md`
+    and this file are the description of the app.
+  - Tests: `scripts/schedule-grid-smoke-test.ts` is **76 assertions** — added
+    `testSubjectColorsReachTheGrid` (every block in its subject's color; one
+    legend entry per subject carrying that color and its class count; name
+    order), `testUnknownSubjectColorFallsBack` (a row with no color and a row
+    holding a token the palette has dropped both render as the default token,
+    block *and* legend) and `testDefaultColorAssignment` (every default is a
+    real token, the dev seed's nine names do not all land on one slot, and case
+    or whitespace does not move one). `tsc`, `lint` (5 pre-existing warnings in
+    generated files + `auth.config.ts`), `build`, engine smoke 111 — all green,
+    and the functions are pushed to the dev deployment.
 
 - **Uniform box matrix, no per-teacher color, green and visible** — three
   requests in one pass, all on `ScheduleGrid`.

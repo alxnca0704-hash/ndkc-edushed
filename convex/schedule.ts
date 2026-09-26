@@ -2,12 +2,13 @@ import { action, internalMutation, internalQuery, query } from "./_generated/ser
 import { api, internal } from "./_generated/api";
 import { v } from "convex/values";
 
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   AVAILABILITY_DAYS,
   AVAILABILITY_TIME_SLOTS,
   parseAvailabilityPatternKey,
 } from "../constants/availability";
+import { asSubjectColorToken } from "../constants/subjectColors";
 import {
   DEFAULT_SCHEDULE_SETTINGS,
   SOFT_CONSTRAINT_KEYS,
@@ -38,6 +39,7 @@ const yearValidator = v.union(
 const sessionValidator = v.object({
   subjectId: v.id("subjects"),
   subjectName: v.string(),
+  subjectColor: v.string(),
   courseId: v.id("courses"),
   courseCode: v.string(),
   courseName: v.string(),
@@ -57,6 +59,19 @@ function toErrorString(error: unknown): string {
   return error instanceof Error && error.message
     ? error.message
     : "Something went wrong";
+}
+
+/**
+ * A stored row as the app reads it, with the color made definite.
+ *
+ * `schedules.subjectColor` is optional in the schema (see the note there), so a
+ * row generated before subjects had colors reads as `undefined`. Normalizing
+ * here — at the query, not at each caller — is what lets
+ * `ScheduleSession.subjectColor` stay a plain `string`: the legacy case is
+ * handled once, and no component has to know "a schedule might have no color".
+ */
+function asSession(row: Doc<"schedules">) {
+  return { ...row, subjectColor: asSubjectColorToken(row.subjectColor) };
 }
 
 type AvailabilityPayload = {
@@ -174,7 +189,7 @@ export const listAll = query({
 
       const sessions = await ctx.db.query("schedules").order("asc").collect();
 
-      return { ok: true as const, data: sessions };
+      return { ok: true as const, data: sessions.map(asSession) };
     } catch (error) {
       return { ok: false as const, error: toErrorString(error) };
     }
@@ -204,7 +219,7 @@ export const listMine = query({
         .withIndex("by_teacherId", (q) => q.eq("teacherId", identity.subject))
         .collect();
 
-      return { ok: true as const, data: sessions };
+      return { ok: true as const, data: sessions.map(asSession) };
     } catch (error) {
       return { ok: false as const, error: toErrorString(error) };
     }
@@ -223,6 +238,13 @@ interface SubjectRow {
   courseCode: string;
   courseName: string;
   year: 1 | 2 | 3 | 4;
+  /**
+   * The subject's palette token. Typed as a plain string because it is validated
+   * as one and normalized with `asSubjectColorToken` on the way into a generated
+   * row — a doc written before colors existed reads as `undefined` at runtime,
+   * and the grid still has to paint it.
+   */
+  color?: string;
 }
 
 interface RoomRow {
@@ -399,6 +421,11 @@ export const generate = action({
       return {
         subjectId: placement.subjectId as Id<"subjects">,
         subjectName: subject.name,
+        // Snapshotted, like the course/year below it, so a schedule row carries
+        // everything either view needs to draw a class — and so a subject
+        // repainted after a generate only reaches the timetable on the next one,
+        // with every other snapshot moving at the same time.
+        subjectColor: asSubjectColorToken(subject.color),
         courseId: subject.courseId as Id<"courses">,
         courseCode: subject.courseCode,
         courseName: subject.courseName,

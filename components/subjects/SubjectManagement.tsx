@@ -21,7 +21,10 @@ import {
 } from "@/components/ui/table";
 import { SUBJECT_YEAR_LEVEL_LABELS } from "@/constants/courses";
 import { ROOM_TYPE_LABELS } from "@/constants/rooms";
+import { asSubjectColorToken } from "@/constants/subjectColors";
 import { useSubjects } from "@/hooks/useSubjects";
+import { subjectPaletteClasses } from "@/lib/subject-colors";
+import { cn } from "@/lib/utils";
 import type { SubjectFormValues, SubjectListItem } from "@/types/subjects";
 
 const SKELETON_ROWS = 5;
@@ -172,7 +175,22 @@ export function SubjectManagement() {
         <TableBody>
           {filteredSubjects.map((subject) => (
             <TableRow key={subject._id}>
-              <TableCell className="font-medium">{subject.name}</TableCell>
+              <TableCell className="font-medium">
+                {/* The color the subject will be drawn in on the generated
+                    schedule, so it is visible here before anything is
+                    generated. Decorative: the name beside it is the label. */}
+                <span className="flex items-center gap-2">
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "size-2.5 shrink-0 rounded-full",
+                      subjectPaletteClasses(asSubjectColorToken(subject.color))
+                        .dot,
+                    )}
+                  />
+                  <span className="truncate">{subject.name}</span>
+                </span>
+              </TableCell>
               <TableCell>
                 <div className="flex items-center gap-2">
                   <Badge variant="secondary">{subject.courseCode}</Badge>

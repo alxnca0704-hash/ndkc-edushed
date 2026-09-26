@@ -4,6 +4,7 @@ import { CalendarRange } from "lucide-react";
 
 import { ScheduleGrid } from "@/components/schedule/ScheduleGrid";
 import { ScheduleGridSkeleton } from "@/components/schedule/ScheduleGridSkeleton";
+import { SubjectColorLegend } from "@/components/schedule/SubjectColorLegend";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { ErrorState } from "@/components/shared/ErrorState";
 import { useMySchedule } from "@/hooks/useMySchedule";
@@ -12,7 +13,8 @@ import { useMySchedule } from "@/hooks/useMySchedule";
  * Read-only "My Schedule" view: only the signed-in teacher's own sessions,
  * arranged by time and day pair. Editing is Dean-only, so there are no actions
  * here — the empty state tells the teacher who to wait for instead of offering
- * a button they can't use.
+ * a button they can't use. The legend lists only this teacher's own subjects,
+ * because the grid it sits above is built from the same rows.
  */
 export function MySchedulePage() {
   const {
@@ -53,7 +55,12 @@ export function MySchedulePage() {
       );
     }
 
-    return <ScheduleGrid grid={grid} />;
+    return (
+      <div className="flex flex-col gap-3">
+        <SubjectColorLegend subjects={grid.subjects} />
+        <ScheduleGrid grid={grid} />
+      </div>
+    );
   };
 
   const summary = isLoading

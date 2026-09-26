@@ -1,5 +1,6 @@
 import type { SubjectYearLevel } from "@/types/course";
 import type { DayPattern } from "@/constants/dayPatterns";
+import type { SubjectColorToken } from "@/constants/subjectColors";
 import type { AvailabilityTimeSlot } from "@/types/availability";
 import type { RoomType } from "@/types/rooms";
 import type { OptimizationResult } from "@/types/scheduleSettings";
@@ -8,6 +9,13 @@ export interface ScheduleSession {
   _id: string;
   subjectId: string;
   subjectName: string;
+  /**
+   * The subject's palette token, snapshotted onto this row at generation time.
+   * A `string` because that is what the table holds — `buildScheduleGrid`
+   * normalizes it with `asSubjectColorToken`, so a row generated before colors
+   * existed still paints.
+   */
+  subjectColor: string;
   courseId: string;
   courseCode: string;
   courseName: string;
@@ -69,11 +77,31 @@ export interface ScheduleGridBlock {
   lanes: number;
   subjectId: string;
   subjectName: string;
+  /**
+   * The subject's color, normalized to a palette token. A card's fill, ink and
+   * legend swatch all read this one field, so the Dean and the Teacher cannot
+   * draw the same subject in two different colors.
+   */
+  subjectColor: SubjectColorToken;
   teacherId: string;
   teacherName: string;
   roomName: string;
   startMinutes: number;
   endMinutes: number;
+}
+
+/**
+ * One subject in the grid's week, for the legend. Derived from the blocks that
+ * were actually drawn, so the legend can never name a subject the grid is not
+ * showing (the Dean's view is filtered to one Course + Year; the Teacher's is
+ * filtered to their own classes).
+ */
+export interface ScheduleGridSubject {
+  id: string;
+  name: string;
+  color: SubjectColorToken;
+  /** Classes drawn for this subject — a Mon+Wed pair is one class, not two. */
+  classCount: number;
 }
 
 /** One time-block row: the slot it stands for plus the blocks beginning there. */
@@ -129,6 +157,8 @@ export interface ScheduleGridTracks {
 export interface ScheduleGrid {
   columns: readonly ScheduleGridColumn[];
   rows: readonly ScheduleGridRow[];
+  /** Subjects present in this grid, with the color each is drawn in. */
+  subjects: readonly ScheduleGridSubject[];
   subjectCount: number;
   sessionCount: number;
   /**

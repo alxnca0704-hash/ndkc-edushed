@@ -14,12 +14,32 @@ import {
   PRESSURE_TEST_ROOMS,
   PRESSURE_TEST_SUBJECTS,
 } from "../constants/pressureTest";
+import {
+  asSubjectColorToken,
+  isSubjectColorToken,
+  subjectColorTokenForName,
+} from "../constants/subjectColors";
 
-type LegacySubject = Omit<Doc<"subjects">, "courseId" | "year"> & {
+type LegacySubject = Omit<Doc<"subjects">, "courseId" | "year" | "color"> & {
   roomType?: "lecture" | "lab";
   courseId?: Id<"courses">;
   year?: 1 | 2 | 3 | 4;
+  color?: string;
 };
+
+/**
+ * The color a `db.replace` has to carry for a doc that predates colors.
+ *
+ * Every migration below replaces whole documents, and the table requires a
+ * `color`, so a legacy doc has to be given one rather than fail validation. It
+ * gets the same deterministic default a fresh create would, and a doc that
+ * already has a valid token keeps it untouched.
+ */
+function carriedColor(subject: LegacySubject): string {
+  return isSubjectColorToken(subject.color)
+    ? subject.color
+    : subjectColorTokenForName(subject.name);
+}
 
 export const backfillSubjectRoomIds = internalMutation({
   args: {},
@@ -69,6 +89,7 @@ export const backfillSubjectRoomIds = internalMutation({
         courseId: subject.courseId as Id<"courses">,
         year: subject.year as 1 | 2 | 3 | 4,
         teacherId: subject.teacherId,
+        color: carriedColor(subject),
         createdAt: subject.createdAt,
         updatedAt: subject.updatedAt,
       });
@@ -105,6 +126,7 @@ export const backfillSubjectRemoveDayPattern = internalMutation({
         courseId: subject.courseId as Id<"courses">,
         year: subject.year as 1 | 2 | 3 | 4,
         teacherId: subject.teacherId,
+        color: carriedColor(subject),
         createdAt: subject.createdAt,
         updatedAt: subject.updatedAt,
       });
@@ -373,6 +395,7 @@ export const backfillSubjectCourseAndYear = internalMutation({
         courseId: subject.courseId ?? fallbackCourse._id,
         year: subject.year ?? 1,
         teacherId: subject.teacherId,
+        color: carriedColor(subject),
         createdAt: subject.createdAt,
         updatedAt: now,
       });
@@ -380,6 +403,86 @@ export const backfillSubjectCourseAndYear = internalMutation({
     }
 
     return { backfilled, courseCode: fallbackCourse.code };
+  },
+});
+
+/**
+ * Subjects now carry a palette token, so every subject saved before this change
+ * is given the deterministic default a fresh create would get. Idempotent: a
+ * doc that already holds a token the palette still recognizes is left untouched,
+ * so a second run reports 0 and a Dean's picked colors are never overwritten.
+ */
+export const backfillSubjectColors = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const subjects = await ctx.db.query("subjects").collect();
+    const legacySubjects = subjects.filter(
+      (subject) => !isSubjectColorToken((subject as LegacySubject).color),
+    ) as LegacySubject[];
+
+    if (legacySubjects.length === 0) {
+      return { backfilled: 0 };
+    }
+
+    let backfilled = 0;
+    for (const subject of legacySubjects) {
+      await ctx.db.patch(subject._id, {
+        color: carriedColor(subject),
+        updatedAt: Date.now(),
+      });
+      backfilled += 1;
+    }
+
+    return { backfilled };
+  },
+});
+
+/**
+ * Generated rows snapshot the subject's color the same way they snapshot its
+ * course and year, so rows written before this field existed are backfilled from
+ * their subject. Run `backfillSubjectColors` first — a row whose subject had no
+ * color yet would otherwise be painted with the default instead of the subject's
+ * own. Idempotent: rows that already carry `subjectColor` are left untouched.
+ */
+export const backfillScheduleSubjectColor = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const sessions = await ctx.db.query("schedules").collect();
+    const legacySessions = sessions.filter(
+      (session) =>
+        !isSubjectColorToken(
+          (session as { subjectColor?: string }).subjectColor,
+        ),
+    );
+
+    if (legacySessions.length === 0) {
+      return { backfilled: 0, skipped: 0 };
+    }
+
+    const colorBySubject = new Map(
+      (await ctx.db.query("subjects").collect()).map((subject) => [
+        subject._id,
+        asSubjectColorToken((subject as LegacySubject).color),
+      ]),
+    );
+
+    let backfilled = 0;
+    let skipped = 0;
+
+    for (const session of legacySessions) {
+      const color = colorBySubject.get(session.subjectId);
+      if (!color) {
+        skipped += 1;
+        continue;
+      }
+      await ctx.db.patch(session._id, {
+        subjectColor: color,
+        updatedAt: Date.now(),
+      });
+      backfilled += 1;
+    }
+
+    return { backfilled, skipped, needsRegenerate: skipped > 0 };
   },
 });
 
@@ -562,6 +665,9 @@ export const seedPressureTestSubjects = internalMutation({
         courseId: course._id,
         year: seed.year,
         teacherId: teacher.clerkId,
+        // Same default a Dean-created subject gets, so the scenario's timetable
+        // is as readable as a hand-built one.
+        color: subjectColorTokenForName(seed.name),
         createdAt: now,
         updatedAt: now,
       });

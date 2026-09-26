@@ -6,11 +6,13 @@ import {
   areaPatternLabel,
 } from "@/constants/availability";
 import { DAY_PATTERN_OPTIONS } from "@/constants/dayPatterns";
+import { asSubjectColorToken } from "@/constants/subjectColors";
 import type {
   ScheduleGrid,
   ScheduleGridBlock,
   ScheduleGridColumn,
   ScheduleGridRow,
+  ScheduleGridSubject,
   ScheduleGridTracks,
   ScheduleSession,
 } from "@/types/schedule";
@@ -105,6 +107,10 @@ function blockFor(
     lanes: 1,
     subjectId: session.subjectId,
     subjectName: session.subjectName,
+    // Normalized here rather than trusted: a row generated before subjects had
+    // colors carries no token, and the default keeps it paintable instead of
+    // leaving an uncolored block on the grid.
+    subjectColor: asSubjectColorToken(session.subjectColor),
     teacherId: session.teacherId,
     teacherName: session.teacherName,
     roomName: session.roomName,
@@ -270,6 +276,37 @@ function rowsFor(
 }
 
 /**
+ * The subjects the grid actually draws, one entry each, for the legend.
+ *
+ * Read off the blocks rather than the sessions, so it is exactly the set of
+ * subjects on screen: the Dean's view is filtered to one Course + Year and the
+ * Teacher's to their own classes, and a legend that named a subject from
+ * somewhere else in the week would be lying about the picture above it. Sorted
+ * by name so the legend does not reshuffle when the week is regenerated.
+ */
+function subjectsFor(
+  blocks: readonly ScheduleGridBlock[],
+): ScheduleGridSubject[] {
+  const bySubject = new Map<string, ScheduleGridSubject>();
+
+  for (const block of blocks) {
+    const existing = bySubject.get(block.subjectId);
+    if (existing) {
+      existing.classCount += 1;
+      continue;
+    }
+    bySubject.set(block.subjectId, {
+      id: block.subjectId,
+      name: block.subjectName,
+      color: block.subjectColor,
+      classCount: 1,
+    });
+  }
+
+  return [...bySubject.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
  * Width of the leading time-label column, and the floor for one lane of a day
  * pair. Both match `AvailabilityGrid`, so the two grids read as the same
  * component at different densities. Exported because `ScheduleGridSkeleton`
@@ -372,6 +409,7 @@ export function buildScheduleGrid(
   return {
     columns: columnsFor(blocks),
     rows: rowsFor(blocks),
+    subjects: subjectsFor(blocks),
     subjectCount: new Set(sessions.map((session) => session.subjectId)).size,
     sessionCount: sessions.length,
     classCount: blocks.length,

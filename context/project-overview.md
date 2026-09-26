@@ -68,8 +68,10 @@ This is a prototype scheduling application that helps a school Dean generate a c
   only that group's classes; generation itself is a single pass over every
   subject, so conflicts are still checked across all courses
 - Two columns (MW, then TTh) and one row per school-hour time block, a class
-  spanning the rows it occupies, and a color per teacher so overlapping
-  classes stay tellable apart
+  spanning the rows it occupies, and a color per **subject** — chosen from a
+  ten-slot muted palette in the Subject form, or derived from the subject name
+  when the Dean doesn't pick — so a subject is recognizable at a glance and
+  overlapping classes stay tellable apart
 
 ### Schedule Optimization (Dean)
 

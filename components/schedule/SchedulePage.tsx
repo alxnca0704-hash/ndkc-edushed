@@ -10,6 +10,7 @@ import { ScheduleGridSkeleton } from "@/components/schedule/ScheduleGridSkeleton
 import { ScheduleGroupSelector } from "@/components/schedule/ScheduleGroupSelector";
 import { ScheduleGroupSelectorSkeleton } from "@/components/schedule/ScheduleGroupSelectorSkeleton";
 import { SoftConstraintSettings } from "@/components/schedule/SoftConstraintSettings";
+import { SubjectColorLegend } from "@/components/schedule/SubjectColorLegend";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { ErrorState } from "@/components/shared/ErrorState";
 import { Badge } from "@/components/ui/badge";
@@ -134,7 +135,12 @@ export function SchedulePage() {
       );
     }
 
-    return <ScheduleGrid grid={grid} />;
+    return (
+      <div className="flex flex-col gap-3">
+        <SubjectColorLegend subjects={grid.subjects} />
+        <ScheduleGrid grid={grid} />
+      </div>
+    );
   };
 
   const summary = isLoading
