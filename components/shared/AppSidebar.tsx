@@ -4,6 +4,7 @@ import type { CSSProperties } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
+import { cn } from "cn";
 
 import {
   Sidebar,
@@ -46,12 +47,17 @@ export function AppSidebar({
         } as CSSProperties
       }
     >
-      <SidebarContent>
-        {groups.map((group) => (
-          <SidebarGroup key={group.title}>
+      <SidebarContent className="gap-2">
+        {groups.map((group, groupIndex) => (
+          <SidebarGroup
+            key={group.title}
+            className={cn(
+              groupIndex > 0 && "pt-4 group-data-[collapsible=icon]:pt-2",
+            )}
+          >
             <SidebarGroupLabel>{group.title}</SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu>
+              <SidebarMenu className="gap-1">
                 {group.items.map((item) => {
                   const isActive = pathname === item.href;
 
@@ -61,6 +67,7 @@ export function AppSidebar({
                         render={<Link href={item.href} />}
                         isActive={isActive}
                         tooltip={item.title}
+                        className="h-9"
                       >
                         <item.icon />
                         <span>{item.title}</span>
