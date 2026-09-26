@@ -1,5 +1,6 @@
 import type { SubjectYearLevel } from "@/types/course";
 import type { DayPattern } from "@/constants/dayPatterns";
+import type { AvailabilityTimeSlot } from "@/types/availability";
 import type { RoomType } from "@/types/rooms";
 import type { OptimizationResult } from "@/types/scheduleSettings";
 
@@ -41,32 +42,107 @@ export interface GroupedSchedule {
 }
 
 /**
- * One row of a teacher's week: normally a subject's linked pair (the same
- * class on both days of its day pattern) collapsed into a single line. A pair
- * the engine would never emit (different times or rooms on the two days)
- * stays as two sessions and is rendered per session instead.
+ * One class block placed in the schedule grid: a subject, its teacher and room,
+ * and the time-block cells it covers. A 60-minute class has `span` 1; a
+ * 180-minute class spans 3 consecutive rows rather than repeating itself.
+ *
+ * A subject's linked pair (the same class on both days of one day pattern) is a
+ * single block, because the grid's column *is* the day pair — showing it once
+ * per block is what keeps a Mon/Wed class from appearing twice in the MW column.
  */
-export interface MyScheduleRow {
+export interface ScheduleGridBlock {
   key: string;
-  sessions: readonly ScheduleSession[];
-  /** True when the two sessions share a time and room, i.e. a real linked pair. */
-  isLinkedPair: boolean;
+  dayPattern: DayPattern;
+  /** Index of the block's day-pair column, in `DAY_PATTERN_OPTIONS` order. */
+  columnIndex: number;
+  /** 0-based index of the first 60-minute slot the class covers. */
+  startSlot: number;
+  /** How many consecutive slots the class covers, never less than 1. */
+  span: number;
+  /**
+   * 0-based sub-column for classes that overlap in time inside the same day
+   * pair. Two subjects can legitimately share a time with different teachers
+   * and rooms, so without lanes one of them would render on top of the other.
+   */
+  lane: number;
+  /** Lanes shared with the classes this one overlaps; 1 when it overlaps none. */
+  lanes: number;
+  subjectId: string;
+  subjectName: string;
+  teacherId: string;
+  teacherName: string;
+  roomName: string;
+  startMinutes: number;
+  endMinutes: number;
+}
+
+/** One time-block row: the slot it stands for plus the blocks beginning there. */
+export interface ScheduleGridRow {
+  slot: AvailabilityTimeSlot;
+  /** Blocks whose first slot is this one, ordered left to right. */
+  blocks: ScheduleGridBlock[];
+}
+
+/** One day-pair column. Both patterns are always present, per the grid's shape. */
+export interface ScheduleGridColumn {
+  dayPattern: DayPattern;
+  label: string;
+  /**
+   * Sub-columns this day pair needs because classes in it overlap in time. Note
+   * the grid renders `max(laneCount)` lanes for *every* column, so this is the
+   * column's own need, not its rendered width.
+   */
+  laneCount: number;
 }
 
 /**
- * A teacher's sessions grouped by the day pattern the algorithm chose, e.g.
- * "MW · Mon & Wed". Only patterns the teacher actually has rows for are
- * included, in MW → TTh order.
+ * The CSS grid's track layout, derived from a grid's lane counts by
+ * `scheduleGridTracks`.
  */
-export interface MyScheduleGroup {
-  dayPattern: DayPattern;
-  label: string;
-  rows: MyScheduleRow[];
+export interface ScheduleGridTracks {
+  /** A `grid-template-columns` value: the time gutter, then one track per lane. */
+  templateColumns: string;
+  /**
+   * `offsets[i]` is the 1-based index of day pair `i`'s first track. Track 1 is
+   * the time gutter, so the first day pair starts at 2. A block is placed at
+   * `offsets[columnIndex] + lane`, which is what keeps a second lane inside its
+   * own day pair instead of landing in the next one.
+   */
+  offsets: readonly number[];
+  /**
+   * Lanes per day pair, uniform across all of them. The column header spans
+   * this, not the column's own `laneCount`, which may be narrower than what is
+   * actually rendered.
+   */
+  laneCount: number;
+  /** Total tracks the template declares, gutter included. */
+  trackCount: number;
+}
+
+/**
+ * Everything the schedule grid renders, derived from a set of generated
+ * sessions: day-pair columns, one row per school-hour time block, and the class
+ * blocks that span them. Produced by `buildScheduleGrid` so both the Dean and
+ * the Teacher view read a week the same way, and no component has to derive
+ * placement itself.
+ */
+export interface ScheduleGrid {
+  columns: readonly ScheduleGridColumn[];
+  rows: readonly ScheduleGridRow[];
+  subjectCount: number;
+  sessionCount: number;
+  /**
+   * Cards actually drawn — the honest "how many classes" figure. Below
+   * `sessionCount` whenever linked pairs collapsed, so a page summary must use
+   * this and not count a two-day class as two.
+   */
+  classCount: number;
 }
 
 export type InfeasibilityCause =
   | "no-shared-teacher-window"
   | "no-room-available"
+  | "course-year-busy"
   | "unknown";
 
 /**
@@ -78,6 +154,7 @@ export type ConflictKind =
   | "room-occupied"
   | "teacher-unavailable"
   | "no-shared-window"
+  | "course-year-conflict"
   | "arrangement-conflict";
 
 /** One already-formatted "what/where/when" pair, rendered as-is. */

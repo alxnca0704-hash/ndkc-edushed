@@ -55,6 +55,8 @@ const SUBJECTS: SchedulingSubject[] = [
     roomId: "room-lecture-1",
     requiredRoomType: "lecture",
     durationMinutes: 60,
+    courseId: "c-math",
+    year: 1,
   },
   {
     id: "s2",
@@ -63,6 +65,8 @@ const SUBJECTS: SchedulingSubject[] = [
     roomId: "room-lecture-2",
     requiredRoomType: "lecture",
     durationMinutes: 60,
+    courseId: "c-english",
+    year: 1,
   },
   {
     id: "s3",
@@ -71,6 +75,8 @@ const SUBJECTS: SchedulingSubject[] = [
     roomId: "room-lab-1",
     requiredRoomType: "lab",
     durationMinutes: 60,
+    courseId: "c-physics",
+    year: 2,
   },
 ];
 
@@ -288,6 +294,8 @@ function main() {
       roomId: "stack-room-1",
       requiredRoomType: "lecture",
       durationMinutes: 60,
+      courseId: "c-stack-1",
+      year: 1,
     },
     {
       id: "stack-2",
@@ -296,6 +304,8 @@ function main() {
       roomId: "stack-room-2",
       requiredRoomType: "lecture",
       durationMinutes: 60,
+      courseId: "c-stack-2",
+      year: 1,
     },
     {
       id: "stack-3",
@@ -304,6 +314,8 @@ function main() {
       roomId: "stack-room-3",
       requiredRoomType: "lecture",
       durationMinutes: 60,
+      courseId: "c-stack-3",
+      year: 1,
     },
   ];
   const stackInput = buildInput(stackSubjects, stackRooms, []);
@@ -324,6 +336,8 @@ function main() {
       roomId: "gap-room-1",
       requiredRoomType: "lecture",
       durationMinutes: 60,
+      courseId: "c-gap-a",
+      year: 1,
     },
     {
       id: "gap-b",
@@ -332,6 +346,8 @@ function main() {
       roomId: "gap-room-2",
       requiredRoomType: "lecture",
       durationMinutes: 60,
+      courseId: "c-gap-b",
+      year: 1,
     },
     {
       id: "gap-c",
@@ -340,6 +356,8 @@ function main() {
       roomId: "gap-room-2",
       requiredRoomType: "lecture",
       durationMinutes: 180,
+      courseId: "c-gap-c",
+      year: 1,
     },
   ];
   const gapInput = buildInput(gapSubjects, gapRooms, []);
@@ -542,6 +560,8 @@ function main() {
       roomId: "room-lecture-1",
       requiredRoomType: "lecture",
       durationMinutes: 60,
+      courseId: "c-tuesday-only",
+      year: 1,
     },
   ];
   const tthAvailability: SchedulingAvailability[] = [
@@ -577,6 +597,8 @@ function main() {
       roomId: "room-lecture-1",
       requiredRoomType: "lecture",
       durationMinutes: 60,
+      courseId: `c-overflow-${index}`,
+      year: 1,
     }),
   );
   const infeasible = buildInput(capacityOverflowSubjects, overbookedRooms, []);
@@ -608,6 +630,8 @@ function main() {
       roomId: "room-it-lab-1",
       requiredRoomType: "lab",
       durationMinutes: 180,
+      courseId: "c-se-101",
+      year: 3,
     },
   ];
   const se101Result = runCSP(buildInput(se101Subjects, labOnlyRooms, []));
@@ -647,6 +671,8 @@ function main() {
       roomId: "room-it-lab-1",
       requiredRoomType: "lab",
       durationMinutes: 180,
+      courseId: "c-se-101",
+      year: 3,
     },
     {
       id: "j9777da1b5ajbzsb4ffh9wc2pn8f1h3h",
@@ -655,6 +681,8 @@ function main() {
       roomId: "room-it-lab-2",
       requiredRoomType: "lab",
       durationMinutes: 120,
+      courseId: "c-hci-101",
+      year: 3,
     },
     {
       id: "j97c8degzgb88ywsfpck2ahatd8f00cw",
@@ -663,6 +691,8 @@ function main() {
       roomId: "room-it-lab-3",
       requiredRoomType: "lab",
       durationMinutes: 180,
+      courseId: "c-os-101",
+      year: 3,
     },
   ];
   const devResult = runCSP(buildInput(devSubjects, devRooms, []));
@@ -720,6 +750,8 @@ function main() {
     roomId: subject.courseCode === "BSIT" ? "room-it-lab-2" : "room-it-lab-1",
     requiredRoomType: "lab" as const,
     durationMinutes: subject.durationMinutes,
+    courseId: `c-${subject.id}`,
+    year: 1,
   }));
   const seededSubjects: SchedulingSubject[] = PRESSURE_TEST_SUBJECTS.map(
     (seed) => ({
@@ -729,6 +761,8 @@ function main() {
       roomId: roomIdFor(seed.roomName, seed.roomType),
       requiredRoomType: seed.roomType,
       durationMinutes: seed.durationMinutes,
+      courseId: `c-${seed.name.toLowerCase().replace(/\s+/g, "-")}`,
+      year: 1,
     }),
   );
   const pressureAvailability: SchedulingAvailability[] = [
@@ -953,6 +987,8 @@ function main() {
       roomId: "room-lecture-1",
       requiredRoomType: "lecture",
       durationMinutes: 60,
+      courseId: "c-pattern-mirror",
+      year: 1,
     },
   ];
   const patternMirrorInput = buildInput(
@@ -1004,6 +1040,8 @@ function main() {
       roomId: "room-crowded",
       requiredRoomType: "lecture",
       durationMinutes: 60,
+      courseId: "c-alpha",
+      year: 1,
     },
     {
       id: "b",
@@ -1013,6 +1051,8 @@ function main() {
       roomId: "room-crowded",
       requiredRoomType: "lecture",
       durationMinutes: 60,
+      courseId: "c-beta",
+      year: 1,
     },
   ];
   const crowdedAvailability: SchedulingAvailability[] = [
@@ -1129,6 +1169,8 @@ function main() {
     roomId: "room-lecture-1",
     requiredRoomType: "lecture",
     durationMinutes: 60,
+    courseId: "c-packed",
+    year: 1,
   };
   const packedInput = buildInput(
     [
@@ -1141,6 +1183,8 @@ function main() {
         roomId: "room-lecture-2",
         requiredRoomType: "lecture",
         durationMinutes: 180,
+        courseId: "c-busy",
+        year: 1,
       },
     ],
     ROOMS,
@@ -1205,6 +1249,270 @@ function main() {
     !noRoomsResult.ok && "reason" in noRoomsResult && noRoomsResult.reason.code === "no-rooms",
     "empty rooms yields no-rooms reason",
   );
+
+  // ---------------------------------------------------------------------
+  // Hard constraint: two subjects of the same course AND year can never be
+  // in a lesson at the same time.
+  // ---------------------------------------------------------------------
+
+  console.log("Hard constraint: same course + year cannot overlap");
+  const courseYearRooms: SchedulingRoom[] = [
+    { id: "room-cy-1", name: "Course Hall 1", type: "lecture" },
+    { id: "room-cy-2", name: "Course Hall 2", type: "lecture" },
+  ];
+  // Only slot 2 is open on the pair, so both subjects want the same time. The
+  // teachers and rooms are all distinct, so course-year is the ONLY blocker.
+  const oneSlotOnly: SchedulingAvailability[] = [
+    {
+      teacherId: "t-cy-1",
+      blockedByPattern: [
+        { dayPattern: "MW", slotIndexes: [0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11] },
+        { dayPattern: "TTh", slotIndexes: [...AVAILABILITY_TIME_SLOTS.keys()] },
+      ],
+    },
+    {
+      teacherId: "t-cy-2",
+      blockedByPattern: [
+        { dayPattern: "MW", slotIndexes: [0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11] },
+        { dayPattern: "TTh", slotIndexes: [...AVAILABILITY_TIME_SLOTS.keys()] },
+      ],
+    },
+  ];
+  const makeCourseYearSubject = (
+    id: string,
+    name: string,
+    teacherId: string,
+    roomId: string,
+    courseId: string,
+    year: 1 | 2 | 3 | 4,
+  ): SchedulingSubject => ({
+    id,
+    name,
+    teacherId,
+    roomId,
+    requiredRoomType: "lecture",
+    durationMinutes: 60,
+    courseId,
+    year,
+  });
+  const courseYearSubjects: SchedulingSubject[] = [
+    makeCourseYearSubject("cy-a", "Cohort A", "t-cy-1", "room-cy-1", "c-shared", 1),
+    makeCourseYearSubject("cy-b", "Cohort B", "t-cy-2", "room-cy-2", "c-shared", 1),
+  ];
+  const courseYearInput = buildInput(
+    courseYearSubjects,
+    courseYearRooms,
+    oneSlotOnly,
+  );
+  const courseYearResult = runCSP(courseYearInput);
+  check(
+    !courseYearResult.ok,
+    "two subjects of the same course and year cannot share the only free time",
+  );
+  if (!courseYearResult.ok && "reasons" in courseYearResult) {
+    const kinds = courseYearResult.reasons.flatMap((reason) =>
+      reason.patterns.map((pattern) => pattern.conflict.kind),
+    );
+    check(
+      kinds.includes("course-year-conflict"),
+      "the failure is explained as a course-year-conflict, not a room or teacher one",
+    );
+    const conflicting = courseYearResult.reasons
+      .flatMap((reason) => reason.patterns)
+      .find((pattern) => pattern.conflict.kind === "course-year-conflict");
+    check(
+      conflicting !== undefined && conflicting.cause === "course-year-busy",
+      "the pattern cause is course-year-busy",
+    );
+    check(
+      conflicting?.conflict.facts.some(
+        (entry) =>
+          entry.label === "Course & year" &&
+          entry.value.includes("c-shared") &&
+          entry.value.includes("Year 1"),
+      ) === true,
+      "facts name the course and the year",
+    );
+    check(
+      conflicting?.conflict.facts.some(
+        (entry) =>
+          entry.label === "Conflicting subject" &&
+          (entry.value.includes("Cohort A") || entry.value.includes("Cohort B")),
+      ) === true,
+      "facts name the subject already holding that time",
+    );
+  }
+
+  console.log("Hard constraint: different year or course may still overlap");
+  // Same course, different year: the students are not the same group, so the
+  // single free slot is fine for both.
+  const differentYearSubjects: SchedulingSubject[] = [
+    makeCourseYearSubject("dy-1", "Year 1 cohort", "t-cy-1", "room-cy-1", "c-shared", 1),
+    makeCourseYearSubject("dy-2", "Year 2 cohort", "t-cy-2", "room-cy-2", "c-shared", 2),
+  ];
+  const differentYearResult = runCSP(
+    buildInput(differentYearSubjects, courseYearRooms, oneSlotOnly),
+  );
+  check(
+    differentYearResult.ok,
+    "the same course in a different year may overlap in time",
+  );
+  if (differentYearResult.ok) {
+    check(
+      validateSolution(
+        buildInput(differentYearSubjects, courseYearRooms, oneSlotOnly),
+        differentYearResult.solution,
+      ).valid,
+      "the different-year schedule validates cleanly",
+    );
+  }
+
+  // Same year, different courses: also a different group of students.
+  const differentCourseSubjects: SchedulingSubject[] = [
+    makeCourseYearSubject("dc-1", "Course X", "t-cy-1", "room-cy-1", "c-x", 1),
+    makeCourseYearSubject("dc-2", "Course Y", "t-cy-2", "room-cy-2", "c-y", 1),
+  ];
+  const differentCourseResult = runCSP(
+    buildInput(differentCourseSubjects, courseYearRooms, oneSlotOnly),
+  );
+  check(
+    differentCourseResult.ok,
+    "two different courses in the same year may overlap in time",
+  );
+
+  console.log("Hard constraint: validator rejects an overlapping course-year pair");
+  // Hand-built, because the CSP can no longer produce this. Different teachers,
+  // different rooms, no availability blocks: only the course-year overlap makes
+  // it illegal, which proves the check is not piggy-backing on teacher/room.
+  const overlapSubjects: SchedulingSubject[] = [
+    makeCourseYearSubject("ov-1", "Cohort A", "t-ov-1", "room-ov-1", "c-overlap", 3),
+    makeCourseYearSubject("ov-2", "Cohort B", "t-ov-2", "room-ov-2", "c-overlap", 3),
+  ];
+  const overlapInput = buildInput(overlapSubjects, [
+    { id: "room-ov-1", name: "Overlap Hall 1", type: "lecture" },
+    { id: "room-ov-2", name: "Overlap Hall 2", type: "lecture" },
+  ], []);
+  const overlapPlacements: PlacedSession[] = [
+    { subjectId: "ov-1", teacherId: "t-ov-1", roomId: "room-ov-1" },
+    { subjectId: "ov-2", teacherId: "t-ov-2", roomId: "room-ov-2" },
+  ].flatMap((base) =>
+    [0, 2].map(
+      (dayIndex): PlacedSession => ({
+        ...base,
+        dayPattern: "MW",
+        dayIndex,
+        startMinutes: TIME_SLOTS[2].startMinutes,
+        endMinutes: TIME_SLOTS[2].endMinutes,
+      }),
+    ),
+  );
+  const overlapCheck = validateSolution(overlapInput, overlapPlacements);
+  check(
+    !overlapCheck.valid,
+    "two sessions of one course-year at the same time is invalid",
+  );
+  check(
+    overlapCheck.violations.some((violation) =>
+      violation.includes("same course and year") &&
+      violation.includes("c-overlap") &&
+      violation.includes("year 3"),
+    ),
+    "the violation names the course, the year and the day",
+  );
+  check(
+    overlapCheck.violations.every(
+      (violation) =>
+        !violation.includes("double-booked") ||
+        violation.includes("teacher") ||
+        violation.includes("room"),
+    ),
+    "teachers and rooms are NOT reported as double-booked in that case",
+  );
+
+  // Same hand-built placements, but the year differs -> now perfectly legal.
+  const overlapDifferentYear: SchedulingSubject[] = [
+    makeCourseYearSubject("ov-1", "Cohort A", "t-ov-1", "room-ov-1", "c-overlap", 3),
+    makeCourseYearSubject("ov-2", "Cohort B", "t-ov-2", "room-ov-2", "c-overlap", 4),
+  ];
+  check(
+    validateSolution(
+      buildInput(overlapDifferentYear, [
+        { id: "room-ov-1", name: "Overlap Hall 1", type: "lecture" },
+        { id: "room-ov-2", name: "Overlap Hall 2", type: "lecture" },
+      ], []),
+      overlapPlacements,
+    ).valid,
+    "the same placements are valid once one subject moves to another year",
+  );
+
+  console.log("Hard constraint: partial overlap counts, and the GA refuses a bad seed");
+  // 120 min over two slots would straddle another 60-min session of the same
+  // course-year. Kept as a validator check because a 2-slot subject is
+  // 120 minutes, which the engine allows.
+  const straddlingSubjects: SchedulingSubject[] = [
+    { ...overlapSubjects[0], id: "st-1", durationMinutes: 120 },
+    { ...overlapSubjects[1], id: "st-2", durationMinutes: 60 },
+  ];
+  const straddlingInput = buildInput(straddlingSubjects, [
+    { id: "room-ov-1", name: "Overlap Hall 1", type: "lecture" },
+    { id: "room-ov-2", name: "Overlap Hall 2", type: "lecture" },
+  ], []);
+  const straddlingPlacements: PlacedSession[] = [
+    { subjectId: "st-1", teacherId: "t-ov-1", roomId: "room-ov-1" },
+    { subjectId: "st-2", teacherId: "t-ov-2", roomId: "room-ov-2" },
+  ].flatMap((base, baseIndex) =>
+    [0, 2].map(
+      (dayIndex): PlacedSession => ({
+        ...base,
+        dayPattern: "MW",
+        dayIndex,
+        // st-1 runs slots 1-2, st-2 runs slot 2: they share slot 2 only.
+        startMinutes: TIME_SLOTS[baseIndex === 0 ? 1 : 2].startMinutes,
+        endMinutes: TIME_SLOTS[baseIndex === 0 ? 2 : 2].endMinutes,
+      }),
+    ),
+  );
+  check(
+    !validateSolution(straddlingInput, straddlingPlacements).valid,
+    "a partial overlap of the same course-year is still a violation",
+  );
+
+  // The GA must not accept or emit a course-year violation. runGA validates its
+  // seed first, so an illegal seed has to throw rather than be "optimized".
+  let gaThrewForCourseYear = false;
+  try {
+    runGA(overlapInput, overlapPlacements, {
+      weights: { ...NO_PREFERENCES, daySpread: 5 },
+      random: seededRandom(7),
+    });
+  } catch {
+    gaThrewForCourseYear = true;
+  }
+  check(
+    gaThrewForCourseYear,
+    "runGA refuses to optimize a seed that double-books a course-year",
+  );
+
+  // And on a legal seed, the GA's own output must stay legal.
+  const legalCourseYearInput = buildInput(
+    [
+      makeCourseYearSubject("ok-1", "Cohort A", "t-cy-1", "room-cy-1", "c-ok", 1),
+      makeCourseYearSubject("ok-2", "Cohort B", "t-cy-2", "room-cy-2", "c-ok", 1),
+    ],
+    courseYearRooms,
+    [],
+  );
+  const legalSeed = runCSP(legalCourseYearInput);
+  if (legalSeed.ok) {
+    const gaOut = runGA(legalCourseYearInput, legalSeed.solution, {
+      weights: { ...NO_PREFERENCES, workloadBalance: 3, daySpread: 3 },
+      random: seededRandom(11),
+    });
+    check(
+      validateSolution(legalCourseYearInput, gaOut.schedule).valid,
+      "the GA's optimized schedule still satisfies the course-year constraint",
+    );
+  }
 
   console.log(`\n${assertions} assertions, ${failures} failures`);
   if (failures > 0) {

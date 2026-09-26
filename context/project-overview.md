@@ -20,7 +20,7 @@ This is a prototype scheduling application that helps a school Dean generate a c
 5. **Teacher:** logs in and marks unavailable days/times — saved to Convex, linked to their Clerk user ID
 6. **Dean:** clicks "Generate Schedule"
 7. System reads Rooms, Subjects, and Availability from Convex, runs the scheduling logic, optimizes the result against the Dean's soft-constraint preferences if any are enabled, and writes the resulting schedule back to Convex
-8. **Dean:** views the generated schedule in a table, loaded live from
+8. **Dean:** views the generated schedule as a time grid, loaded live from
    Convex, switching between one course + year level at a time
 9. **Teacher:** views only their own assigned classes in a filtered, read-only schedule, loaded live from Convex
 
@@ -63,11 +63,13 @@ This is a prototype scheduling application that helps a school Dean generate a c
 ### Schedule Generation (Dean)
 
 - One-click action to generate a full timetable from current Rooms, Subjects, and Teacher availability
-- Displays the resulting schedule in a read-only table view, broken out by
-  course and year level — the Dean picks one Course + Year (e.g. "BSCS –
-  1st Year") and sees only that group's classes; generation itself is a
-  single pass over every subject, so conflicts are still checked across all
-  courses
+- Displays the resulting schedule in a read-only time grid, filtered to one
+  Course + Year (e.g. "BSCS – 1st Year") — the Dean picks a group and sees
+  only that group's classes; generation itself is a single pass over every
+  subject, so conflicts are still checked across all courses
+- Two columns (MW, then TTh) and one row per school-hour time block, a class
+  spanning the rows it occupies, and a color per teacher so overlapping
+  classes stay tellable apart
 
 ### Schedule Optimization (Dean)
 
@@ -97,9 +99,10 @@ This is a prototype scheduling application that helps a school Dean generate a c
 
 ### My Schedule (Teacher)
 
-- Read-only view showing only the subjects/sessions assigned to the logged-in teacher
-- Grouped by the day pattern the algorithm chose (MW — Mon & Wed, then TTh —
-  Tue & Thu); a subject's two linked sessions read as one class, not two
+- Read-only time grid showing only the subjects/sessions assigned to the logged-in teacher
+- Two columns — MW (Mon & Wed) then TTh (Tue & Thu) — with one row per
+  school-hour time block; a subject's two linked sessions read as one class
+  spanning those rows, not two
 - Displays subject, course + year level, time, and room
 - No editing: a teacher cannot move, request, or regenerate a class
 

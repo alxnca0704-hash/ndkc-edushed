@@ -2,23 +2,23 @@
 
 import { CalendarRange } from "lucide-react";
 
-import { MyScheduleTable } from "@/components/schedule/MyScheduleTable";
-import { MyScheduleTableSkeleton } from "@/components/schedule/MyScheduleTableSkeleton";
+import { ScheduleGrid } from "@/components/schedule/ScheduleGrid";
+import { ScheduleGridSkeleton } from "@/components/schedule/ScheduleGridSkeleton";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { ErrorState } from "@/components/shared/ErrorState";
 import { useMySchedule } from "@/hooks/useMySchedule";
 
 /**
  * Read-only "My Schedule" view: only the signed-in teacher's own sessions,
- * grouped by day pattern (MW / TTh). Editing is Dean-only, so there are no
- * actions here — the empty state tells the teacher who to wait for instead of
- * offering a button they can't use.
+ * arranged by time and day pair. Editing is Dean-only, so there are no actions
+ * here — the empty state tells the teacher who to wait for instead of offering
+ * a button they can't use.
  */
 export function MySchedulePage() {
   const {
-    groups,
+    grid,
     subjectCount,
-    sessionCount,
+    classCount,
     isLoading,
     isEmpty,
     error,
@@ -30,7 +30,7 @@ export function MySchedulePage() {
 
   const renderContent = () => {
     if (isLoading) {
-      return <MyScheduleTableSkeleton />;
+      return <ScheduleGridSkeleton />;
     }
 
     if (error) {
@@ -53,7 +53,7 @@ export function MySchedulePage() {
       );
     }
 
-    return <MyScheduleTable groups={groups} />;
+    return <ScheduleGrid grid={grid} />;
   };
 
   const summary = isLoading
@@ -62,17 +62,17 @@ export function MySchedulePage() {
       ? "No classes assigned to you yet."
       : `${subjectCount} ${
           subjectCount === 1 ? "subject" : "subjects"
-        } · ${sessionCount} ${
-          sessionCount === 1 ? "session" : "sessions"
-        } this week, grouped by day pair.`;
+        } · ${classCount} ${
+          classCount === 1 ? "class" : "classes"
+        } this week, arranged by day pair and time.`;
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
       <div className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold tracking-tight">My Schedule</h1>
         <p className="text-sm text-muted-foreground">
-          The classes assigned to you in the generated schedule, grouped by the
-          days they meet on.
+          The classes assigned to you in the generated schedule, arranged by time
+          and by the days they meet on.
         </p>
       </div>
 

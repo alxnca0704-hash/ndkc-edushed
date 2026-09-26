@@ -188,6 +188,63 @@ function roomFreeAt(
 }
 
 /**
+ * Placed sessions that would put this subject's class group in two lessons at
+ * once, i.e. another subject of the SAME course and year. Resolved through
+ * `subjectById` so `PlacedSession` stays a placement record.
+ */
+function courseYearBlockersAt(
+  input: SchedulingInput,
+  subject: SchedulingSubject,
+  placedSessions: readonly PlacedSession[],
+  dayIndex: number,
+  startMinutes: number,
+  endMinutes: number,
+): readonly PlacedSession[] {
+  const subjectById = new Map(
+    input.subjects.map((candidate) => [candidate.id, candidate]),
+  );
+  return placedSessions.filter((placement) => {
+    if (placement.subjectId === subject.id || placement.dayIndex !== dayIndex) {
+      return false;
+    }
+    const other = subjectById.get(placement.subjectId);
+    if (!other) {
+      return false;
+    }
+    return (
+      other.courseId === subject.courseId &&
+      other.year === subject.year &&
+      intervalsOverlap(
+        placement.startMinutes,
+        placement.endMinutes,
+        startMinutes,
+        endMinutes,
+      )
+    );
+  });
+}
+
+function courseYearFreeAt(
+  input: SchedulingInput,
+  subject: SchedulingSubject,
+  placedSessions: readonly PlacedSession[],
+  dayIndex: number,
+  startMinutes: number,
+  endMinutes: number,
+): boolean {
+  return (
+    courseYearBlockersAt(
+      input,
+      subject,
+      placedSessions,
+      dayIndex,
+      startMinutes,
+      endMinutes,
+    ).length === 0
+  );
+}
+
+/**
  * The contiguous runs of slots the teacher has blocked on a day, clipped to
  * the school-hours grid. Availability is pattern-level, so both days of a
  * pair carry the same blocks — the caller reports one run list for the pair.
@@ -334,6 +391,24 @@ function arrangementConflictMessage(
   );
 }
 
+function courseYearMessage(
+  subject: SchedulingSubject,
+  dayPattern: SchedulingDayPattern,
+  day1Short: string,
+  day2Short: string,
+  blockingSubjectName: string,
+  firstSharedStart: number,
+): string {
+  return (
+    `"${subject.name}" (${subject.durationMinutes} min, ${dayPattern}) ` +
+    `is free at shared times on ${day1Short} & ${day2Short} ` +
+    `(e.g. ${formatClock(firstSharedStart)}), but every one of those times is ` +
+    `already taken by "${blockingSubjectName}" — a different class of the same ` +
+    `course and year. This group can only be in one lesson at a time, so move ` +
+    `one of them to another time.`
+  );
+}
+
 /**
  * Which already-placed class occupies the room at a start time the teacher
  * could have taken, per pattern day. Picks the earliest clashing start so the
@@ -363,6 +438,36 @@ function roomBlockersAtFirstClash(
       );
       return placement ? [{ dayIndex, placement }] : [];
     });
+    if (blockers.length > 0) {
+      return { startMinutes: start, blockers };
+    }
+  }
+  return null;
+}
+
+/**
+ * Which already-placed class of the same course and year occupies the start
+ * times the teacher and room could otherwise have taken. Picks the earliest
+ * clashing start so the explanation names a concrete, reproducible slot.
+ */
+function courseYearBlockersAtFirstClash(
+  input: SchedulingInput,
+  subject: SchedulingSubject,
+  placedSessions: readonly PlacedSession[],
+  patternDays: readonly number[],
+  sharedStarts: readonly number[],
+): { startMinutes: number; blockers: readonly DayBlocker[] } | null {
+  for (const start of sharedStarts) {
+    const blockers = patternDays.flatMap((dayIndex): DayBlocker[] =>
+      courseYearBlockersAt(
+        input,
+        subject,
+        placedSessions,
+        dayIndex,
+        start,
+        start + subject.durationMinutes,
+      ).map((placement) => ({ dayIndex, placement })),
+    );
     if (blockers.length > 0) {
       return { startMinutes: start, blockers };
     }
@@ -589,6 +694,87 @@ export function explainPatternFailure(
           fact("Room", roomName),
           ...(blockingSubjectNames.length > 0
             ? [fact("Booked by", blockingSubjectNames.join(", "))]
+            : []),
+          ...(clash === null
+            ? []
+            : [
+                fact(
+                  "Overlaps",
+                  overlapsText(
+                    input,
+                    clash.blockers,
+                    clash.startMinutes,
+                    clash.startMinutes + subject.durationMinutes,
+                  ),
+                ),
+              ]),
+        ],
+      },
+    };
+  }
+
+  const courseYearClash =
+    firstAvailable !== undefined &&
+    !sharedStarts.some(
+      (start) =>
+        dayIndex1 >= 0 &&
+        dayIndex2 >= 0 &&
+        courseYearFreeAt(
+          input,
+          subject,
+          placedSessions,
+          dayIndex1,
+          start,
+          start + subject.durationMinutes,
+        ) &&
+        courseYearFreeAt(
+          input,
+          subject,
+          placedSessions,
+          dayIndex2,
+          start,
+          start + subject.durationMinutes,
+        ),
+    );
+
+  if (courseYearClash) {
+    const clash = courseYearBlockersAtFirstClash(
+      input,
+      subject,
+      placedSessions,
+      patternDays,
+      sharedStarts,
+    );
+    const blockingSubjectNames = [
+      ...new Set(
+        (clash?.blockers ?? []).map((blocker) =>
+          subjectNameFor(input, blocker.placement.subjectId),
+        ),
+      ),
+    ];
+    const message = courseYearMessage(
+      subject,
+      dayPattern,
+      day1Short,
+      day2Short,
+      blockingSubjectNames[0] ?? "another class of the same group",
+      sharedStarts[0],
+    );
+
+    return {
+      dayPattern,
+      day1FreeWindows,
+      day2FreeWindows,
+      cause: "course-year-busy",
+      message,
+      conflict: {
+        kind: "course-year-conflict",
+        title: "Course & year already in a lesson",
+        message,
+        facts: [
+          fact("Course & year", `${subject.courseId} · Year ${subject.year}`),
+          ...(blockingSubjectNames.length > 0
+            ? [fact("Conflicting subject", blockingSubjectNames.join(", "))]
             : []),
           ...(clash === null
             ? []

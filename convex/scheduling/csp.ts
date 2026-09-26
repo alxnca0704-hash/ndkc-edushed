@@ -11,6 +11,7 @@ import type {
   SchedulingInput,
   SchedulingSubject,
 } from "./types";
+import { courseYearKey } from "./types";
 import { blockedByDayFor, intervalsOverlap, type Interval } from "./util";
 import { explainInfeasibility } from "./cspDiagnostics";
 
@@ -39,9 +40,15 @@ interface SubjectPlacement {
   option: TimeOption;
 }
 
+/**
+ * Hard-constraint occupancy for the search. Tracks the three things that can
+ * never be double-booked: a teacher, a room, and a course-year group. The GA
+ * decodes through `greedyDecode` too, so a fix here covers both stages.
+ */
 class OccupancyTracker {
   private readonly byTeacher = new Map<string, Map<number, Interval[]>>();
   private readonly byRoom = new Map<string, Map<number, Interval[]>>();
+  private readonly byCourseYear = new Map<string, Map<number, Interval[]>>();
 
   private entriesFor(
     map: Map<string, Map<number, Interval[]>>,
@@ -64,6 +71,7 @@ class OccupancyTracker {
   conflicts(
     teacherId: string,
     roomId: string,
+    courseYear: string,
     dayIndex: number,
     startMinutes: number,
     endMinutes: number,
@@ -82,7 +90,24 @@ class OccupancyTracker {
       return true;
     }
     const roomDay = this.entriesFor(this.byRoom, roomId, dayIndex);
-    return roomDay.some((interval) =>
+    if (
+      roomDay.some((interval) =>
+        intervalsOverlap(
+          interval.startMinutes,
+          interval.endMinutes,
+          startMinutes,
+          endMinutes,
+        ),
+      )
+    ) {
+      return true;
+    }
+    const courseYearDay = this.entriesFor(
+      this.byCourseYear,
+      courseYear,
+      dayIndex,
+    );
+    return courseYearDay.some((interval) =>
       intervalsOverlap(
         interval.startMinutes,
         interval.endMinutes,
@@ -95,6 +120,7 @@ class OccupancyTracker {
   add(
     teacherId: string,
     roomId: string,
+    courseYear: string,
     dayIndex: number,
     startMinutes: number,
     endMinutes: number,
@@ -107,11 +133,16 @@ class OccupancyTracker {
       startMinutes,
       endMinutes,
     });
+    this.entriesFor(this.byCourseYear, courseYear, dayIndex).push({
+      startMinutes,
+      endMinutes,
+    });
   }
 
   remove(
     teacherId: string,
     roomId: string,
+    courseYear: string,
     dayIndex: number,
     startMinutes: number,
     endMinutes: number,
@@ -123,6 +154,11 @@ class OccupancyTracker {
     );
     removeEntry(
       this.entriesFor(this.byRoom, roomId, dayIndex),
+      startMinutes,
+      endMinutes,
+    );
+    removeEntry(
+      this.entriesFor(this.byCourseYear, courseYear, dayIndex),
       startMinutes,
       endMinutes,
     );
@@ -319,12 +355,14 @@ export function greedyDecode(
   const result: PlacedSession[] = [];
 
   for (const unit of unitsInOrder) {
+    const courseYear = courseYearKey(unit.subject);
     const option = unit.candidates.find(
       (candidate) =>
         !unit.days.some((dayIndex) =>
           tracker.conflicts(
             unit.subject.teacherId,
             unit.subject.roomId,
+            courseYear,
             dayIndex,
             candidate.startMinutes,
             candidate.endMinutes,
@@ -338,6 +376,7 @@ export function greedyDecode(
       tracker.add(
         unit.subject.teacherId,
         unit.subject.roomId,
+        courseYear,
         dayIndex,
         option.startMinutes,
         option.endMinutes,
@@ -362,11 +401,13 @@ function firstPlaceableOption(
   tracker: OccupancyTracker,
 ): SubjectPlacement | null {
   for (const unit of domain.options) {
+    const courseYear = courseYearKey(unit.subject);
     for (const option of unit.candidates) {
       const conflicts = unit.days.some((dayIndex) =>
         tracker.conflicts(
           unit.subject.teacherId,
           unit.subject.roomId,
+          courseYear,
           dayIndex,
           option.startMinutes,
           option.endMinutes,
@@ -399,10 +440,12 @@ export function diagnoseFailedPlacement(
   for (const domain of orderedDomains) {
     const placement = firstPlaceableOption(domain, tracker);
     if (placement) {
+      const courseYear = courseYearKey(placement.unit.subject);
       for (const dayIndex of placement.unit.days) {
         tracker.add(
           placement.unit.subject.teacherId,
           placement.unit.subject.roomId,
+          courseYear,
           dayIndex,
           placement.option.startMinutes,
           placement.option.endMinutes,
@@ -465,10 +508,12 @@ export function runCSP(input: SchedulingInput): CspResult {
   let attempts = 0;
 
   function unitConflicts(unit: SubjectUnit, option: TimeOption): boolean {
+    const courseYear = courseYearKey(unit.subject);
     return unit.days.some((dayIndex) =>
       tracker.conflicts(
         unit.subject.teacherId,
         unit.subject.roomId,
+        courseYear,
         dayIndex,
         option.startMinutes,
         option.endMinutes,
@@ -477,10 +522,12 @@ export function runCSP(input: SchedulingInput): CspResult {
   }
 
   function placeUnit(unit: SubjectUnit, option: TimeOption): void {
+    const courseYear = courseYearKey(unit.subject);
     for (const dayIndex of unit.days) {
       tracker.add(
         unit.subject.teacherId,
         unit.subject.roomId,
+        courseYear,
         dayIndex,
         option.startMinutes,
         option.endMinutes,
@@ -489,10 +536,12 @@ export function runCSP(input: SchedulingInput): CspResult {
   }
 
   function unplaceUnit(unit: SubjectUnit, option: TimeOption): void {
+    const courseYear = courseYearKey(unit.subject);
     for (const dayIndex of unit.days) {
       tracker.remove(
         unit.subject.teacherId,
         unit.subject.roomId,
+        courseYear,
         dayIndex,
         option.startMinutes,
         option.endMinutes,

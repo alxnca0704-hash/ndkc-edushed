@@ -5,32 +5,235 @@ change.
 
 ## Current Phase
 
-Complete — the Teacher "My Schedule" page is now the real read-only view
-(spec 11). `/teacher/schedule` no longer renders a placeholder: a new
-teacher-scoped Convex query (`schedule.listMine`) reads the generated
-`schedules` rows through the `by_teacherId` index for the caller's Clerk
-`userId` only, `useMySchedule` groups them by the day pattern the algorithm
-chose (MW — Mon & Wed, then TTh — Tue & Thu) with each subject's linked
-pair collapsed into one line, and `MyScheduleTable` renders
-Subject / Course / Year / Day / Time / Room — stacked cards on a phone, a
-table from `sm` up, with `Badge`s for course and year. Nothing had to be
-re-joined: course, year, room, and the display names are already
-denormalized onto every generated row (spec 08), so the hook only filters,
-sorts, and groups. Browser verification is still outstanding — see Next Up.
+Complete — the schedule is now a grid rather than a table, for both roles
+(spec 12), and the engine has a fourth hard constraint. `/dean/schedule` and
+`/teacher/schedule` render the same `ScheduleGrid`: exactly two columns
+(MW — Mon & Wed, then TTh — Tue & Thu) and one row per
+`AVAILABILITY_TIME_SLOTS` entry (12 rows, 7:30 AM to 6:30 PM), with a class
+spanning the rows it occupies. All the geometry lives in one pure function,
+`buildScheduleGrid` in `lib/schedule.ts`, so the two pages cannot drift and the
+shape is testable without a browser. The four old table components (Dean's and
+the Teacher's, plus their skeletons) are gone, and `ui-context.md` records the
+grid and its colors.
+
+Three follow-up units landed after spec 12: a visual pass on the grid (lane
+geometry, tooltip, density) and the **course/year hard constraint** —
+two subjects sharing both `courseId` and `year` can never be in a lesson at the
+same time; then the **uniform box matrix** — every day pair renders the widest
+lane count, so MW and TTh are always the same width, and the per-teacher color
+assignment was removed. A final pass made the grid **visible and green**:
+a neutral `bg-card` block on a white page was effectively invisible, so the
+day pairs are washed, the hours are ruled, the cards are green and lifted off
+the page with a shadow, and `scheduleGridBlockWidth` now takes the rendered lane
+count so a lone class fills its column. Verified with `tsc`, `lint`, `build`,
+the engine smoke test (111 assertions) and `scripts/schedule-grid-smoke-test.ts`
+(61 assertions). Browser verification is still outstanding — see Next Up.
 
 ## Current Goal
 
-Shipped (see Completed). Remaining follow-up for this unit: eyeball it
-in the browser with a real teacher login. Dev is thin here — every one of
-the 8 generated rows belongs to Zyneer Moreno, so the empty state can't
-be reached without a second teacher (or a regenerate with no subject
-assigned to them), and cross-teacher isolation can't be seen by eye until
-a second teacher owns a subject. Confirm the MW / TTh headings, the one
-line per class, the card layout below `sm`, the table from `sm` up, the
-Course/Year badges, the summary line, and the loading skeleton.
+Shipped (see Completed). Remaining follow-up: eyeball it in the browser.
+Nothing is visible from the command line that matters most here, and three
+things in particular can't be proven by the type checker or a smoke test:
+- **Overlapping classes.** The dev week has no overlap (one teacher owns all
+  four labs, and the CSP forbids them double-booking), so the sub-column
+  split — the part most likely to look wrong — has never rendered. Force it by
+  giving two subjects *different* teachers at the same time in different rooms
+  and same-year, and regenerating. (Same `courseId` + `year` can no longer
+  overlap at all — that is the new hard constraint.)
+- **Card density.** A 60-minute class is 3.5rem tall and shows subject +
+  teacher only; the room is in the tooltip. A 2-hour class shows all three
+  lines. Check the 1-line-to-3-line transition doesn't look accidental.
+- **The green on screen.** The grid is green in four steps (day-pair wash, hour
+  rule, card surface, muted card ink), all hue 152, and cards are separated by
+  `shadow-sm`/`shadow-md` rather than a border. Check legibility in **both**
+  light and dark mode - especially `--schedule-card-muted` (the teacher line)
+  against `--schedule-card`, and that the shadow still reads when a card
+  spans three rows.
+
+Also worth a look: a 3-hour class's text at the narrow mobile width, and the
+12-row grid at 7:30 AM and 6:30 PM with an empty first/last slot.
 
 
 ## Completed
+
+- **Uniform box matrix, no per-teacher color, green and visible** — three
+  requests in one pass, all on `ScheduleGrid`.
+  - **Uniform widths.** `scheduleGridTracks` gives every day pair the *same*
+    lane count — the widest in the week — so MW and TTh are always equal width
+    and a week with no overlap is two equal columns. `ScheduleGridTracks` gained
+    `laneCount`; header and body already consumed the one track string.
+  - `scheduleGridBlockWidth(block, renderedLaneCount)` now takes the *rendered*
+    count rather than the column's own `laneCount`. Both columns render
+    `laneCount` tracks, so a lone class in an unsplit column has to span that
+    many tracks to fill it — reading the column's own count left it sitting in
+    one narrow lane beside an empty one, which looked like a rendering fault.
+  - **Color assignment removed.** `constants/teacherColors.ts`,
+    `components/schedule/TeacherColorLegend.tsx`, `ScheduleGridTeacher`,
+    `ScheduleGridBlock.colorToken` and `ScheduleGrid.teachers` are all gone,
+    along with the `--teacher-palette-*` tokens in `app/globals.css`. Rationale:
+    color was a second identity system competing with the text on a dense grid,
+    and the eight hash-assigned slots collided past eight teachers anyway. The
+    teacher is named in text on the card.
+  - **Visible and green.** A neutral `bg-card` block on a white page was
+    effectively invisible, so the grid gained four green tokens, all hue 152
+    (the app's existing green from `--accent-primary`/`--sidebar-accent`) and
+    registered in `@theme inline`: `--schedule-column` (day-pair wash),
+    `--schedule-rule` (hour hairline), `--schedule-card` (block surface) and
+    `--schedule-card-muted` (teacher/room line), each with a light and dark
+    value. The grid renders them as three background layers painted before
+    everything else — column washes, then row rules, then blocks — so a card
+    occludes the rule it spans instead of a hairline cutting across it.
+  - **Cards separated by shadow, not border.** `shadow-sm`, `shadow-md` on
+    hover. One declaration that stays legible against three different surfaces,
+    and it survives a card growing to two or three rows tall.
+  - Also: a `rounded-xl border bg-card/40` frame on the scroll viewport, so the
+    border stays put while the grid scrolls inside it.
+  - `ScheduleGridSkeleton` mirrors all of it, so the loaded grid does not jump.
+  - Tests: `scripts/schedule-grid-smoke-test.ts` is **61 assertions** — added
+    `testColumnsRenderAtEqualWidth` (uniform lane count, track count, offsets,
+    identical track widths) and, in `testTrackLayout`, that a lone class fills
+    the uniform width while each side of an overlapping cluster still takes one
+    lane. 61 assertions, 0 failures. `tsc` clean, `lint` 0 errors/5 pre-existing
+    warnings, `build` compiles, engine suite 111 assertions, 0 failures.
+  - Two real bugs found and fixed on the way: `app/globals.css` had an
+    `Unclosed comment` from the palette deletion (caught by `build`, not by
+    `tsc`), and `scheduleGridTracks` had a lint warning from a loop variable
+    left unused by the uniform-lane change.
+
+- **Same-course-and-year hard constraint** — two subjects may not be in a lesson
+  at the same time when they share **both** `courseId` and `year`. Different
+  courses, or the same course in a different year, may still overlap freely.
+  - `convex/scheduling/types.ts`: `SchedulingSubject` gains required `courseId`
+    and `year` (`SchedulingYear` = `1 | 2 | 3 | 4`, mirroring
+    `subjects.year`), plus `courseYearKey(subject)` — the one place that
+    defines what "the same class group" means, so the CSP, the validator and
+    the diagnostics cannot drift apart on it. `ConflictKind` gains
+    `"course-year-conflict"` and `InfeasibilityCause` gains `"course-year-busy"`.
+    Making the fields **required** was deliberate: optional fields would let a
+    future caller silently skip the constraint, and `tsc` then flags every
+    construction site instead of letting one slip through.
+  - `convex/schedule.ts`: the action maps `subject.courseId` / `subject.year`
+    into the `SchedulingSubject` it builds. `PlacedSession` was deliberately
+    left alone — it stays a placement record, and the validator resolves the
+    course/year through `subjectById`.
+  - `convex/scheduling/csp.ts`: `OccupancyTracker` gains a third
+    `byCourseYear` map, and `conflicts` / `add` / `remove` take the key. This
+    is the single gate the backtracking search, the greedy diagnostic pass and
+    — importantly — the **GA's `greedyDecode`** all pass through, so the GA
+    cannot reintroduce a violation: it can only fail to decode, and a failed
+    decode is discarded by design. No GA-specific change was needed, and none
+    was added.
+  - `convex/scheduling/validate.ts`: `validateSolution` re-checks the constraint
+    independently over the whole solution, naming the course, the year and the
+    day. Independent on purpose — the validator is what `runGA` trusts before
+    optimizing a seed, so it must not inherit the CSP's assumptions.
+  - `convex/scheduling/cspDiagnostics.ts`: new `courseYearBlockersAt` /
+    `courseYearFreeAt` / `courseYearBlockersAtFirstClash` and
+    `courseYearMessage`, mirroring the `room-occupied` shape. The new branch
+    sits **after** the room check and before the `arrangement-conflict`
+    fallback, so `room-occupied` still wins when the room is the actual
+    blocker and no existing explanation changes wording. Facts read
+    `Course & year` / `Conflicting subject` / `Overlaps`, all engine-formatted;
+    the UI only maps the kind to an icon and a label.
+  - `types/schedule.ts` + `components/schedule/ConflictAlert.tsx`: the new kind
+    gets `UsersRound` and the label "Course & year clash". Both icon and label
+    maps are `Record<ConflictKind, …>`, so adding the union member made
+    `tsc` fail until the UI handled it — the exhaustiveness check is the
+    safety net.
+  - `scripts/scheduling-smoke-test.ts`: 96 → **111 assertions**. The decisive
+    test is an A/B pair — same teachers, same rooms, same single free slot,
+    and the *only* difference between the two runs is the year, so the
+    same-course-and-year run fails and the different-year run succeeds. That
+    isolates the constraint instead of trusting that some other rule caused
+    the failure. Also: the validator rejects a hand-built overlap whose
+    teachers and rooms are all distinct (and stops reporting them as
+    double-booked), a partial 1-slot overlap still counts, the same placements
+    become valid when one subject moves year, `runGA` throws on a
+    course-year-conflicting seed, and the GA's output re-validates clean.
+  - Verified: `npx tsc --noEmit` clean, `npm run lint` 0 errors (5 pre-existing
+    warnings), `npm run build` successful, engine smoke 111/111.
+  - No `components/ui/*` change and no schema change: the data was already on
+    `subjects`; this only stopped the engine from ignoring it.
+
+- **Schedule grid visual pass** — the first render of spec 12 had a structural
+  bug and a flat look. Both fixed:
+  - **The lane bug.** The grid declared one CSS track per day pair but placed
+    blocks at `columnIndex + 2 + lane`, so an MW block in lane 1 landed in
+    TTh's track and bled across the column. Separately, each block used
+    `block.lanes` (the width of its whole overlap *cluster*) as its own span,
+    so a lane-1 block spanned every track and covered its neighbours. Fixed by
+    computing the tracks: `scheduleGridTracks(columns)` in `lib/schedule.ts`
+    returns the `grid-template-columns` string plus lane offsets, and
+    `scheduleGridBlockWidth(block, column)` returns the span. Header and body
+    now consume the same track string, so they cannot drift. The regression is
+    covered by `testTrackLayout` in the grid smoke test (52 → 59 assertions).
+  - **No empty-cell backdrops.** Per `code-standards.md` (no visible borders;
+    separate with background shade and spacing), the empty muted backdrop behind
+    every unbooked cell is gone — the day-pair background carries the
+    structure. Note `ui-context.md` claimed to be the source of this rule; it is
+    a template, and `code-standards.md` is the real source.
+  - **Anchored tooltip.** The card was a `div` with a native `title`. It is now
+    the `TooltipTrigger` under `TooltipProvider delay={0}`, matching
+    `AvailabilityGrid`. `components/ui/tooltip.tsx` is Base UI, not Radix, and
+    was left untouched.
+  - **Palette.** Each slot is a tone + soft-wash pair, not one flat color: the
+    card is filled with the soft wash and the full tone is reserved for the left
+    stripe, the time text and the legend swatch, so contrast does the work a
+    border would otherwise do. `TEACHER_PALETTE_CLASSES` is now
+    `card` / `stripe` / `text` / `dot`. Chroma and hue spread were raised; the
+    old values were so close together that teachers were hard to tell apart.
+  - **Density.** `--schedule-row-height` is now `3.5rem` (`4rem` at
+    `>= 40rem`), sized against the card's content rather than the other way
+    round. A 60-minute class shows subject + teacher; the room line renders
+    only when `block.span > 1`, because three lines plus padding did not fit
+    the shorter row and `overflow-hidden` would have clipped it to a sliver.
+    The tooltip and `aria-label` always carry the full detail, and
+    `ScheduleGridSkeleton` follows the same row height and stripe-shaped
+    legend swatch.
+  - Verified: `npx tsc --noEmit` clean, `npm run lint` 0 errors,
+    `npm run build` successful, grid smoke 59/59, engine smoke 111/111.
+
+- **Schedule as a grid, for Dean and Teacher (spec 12)** — full unit:
+  - `lib/schedule.ts`: `buildScheduleGrid` is now the single source of the
+    grid's shape. It collapses each subject's linked pair into one block (the
+    same two days of one column are one class, so a card drawn twice would
+    claim two classes the schedule has one of), assigns lanes per column, and
+    derives columns / rows / the teacher legend. `groupSessionsByDayPattern`
+    and `MyScheduleGroup` / `MyScheduleRow` are gone — nothing renders that
+    shape anymore. Still pure and Convex-free, so the whole model runs under
+    plain `tsx`.
+  - `types/schedule.ts`: `ScheduleGrid`, `ScheduleGridColumn`,
+    `ScheduleGridRow`, `ScheduleGridBlock`, `ScheduleGridTeacher`. Blocks are
+    pre-positioned (`startSlot`, `span`, `lane`, `lanes`, `columnIndex`), so
+    a component maps them to `grid-area` and never derives placement itself.
+  - `constants/teacherColors.ts` (new): `TEACHER_PALETTE_TOKENS`,
+    `TeacherPaletteToken`, and `TEACHER_PALETTE_CLASSES` — the eight slots
+    as a `card` / `stripe` / `text` / `dot` set. Static strings only, because
+    Tailwind v4 only emits classes it can see at build time; a class assembled
+    from a variable would silently render unstyled. `teacherPaletteToken` hashes
+    the Clerk `userId`, so a teacher's color is stable with nothing to store.
+    (Later widened from the original `card` / `text` / `dot` triple — see the
+    visual pass above.)
+  - `app/globals.css`: `--teacher-palette-1..8` (light + dark) exposed to
+    Tailwind via `@theme inline`, plus `--schedule-row-height`
+    (`3.5rem`, `4rem` at `>= 40rem` after the density pass).
+  - `components/schedule/ScheduleGrid.tsx`, `TeacherColorLegend.tsx`,
+    `ScheduleGridSkeleton.tsx` (new). `ScheduleTable`,
+    `ScheduleTableSkeleton`, `MyScheduleTable`, `MyScheduleTableSkeleton`
+    deleted. The grid is deliberately inert — no drag, no editing, since
+    manual editing is Out of Scope and validation belongs to the engine.
+  - `hooks/useSchedule.ts` / `useMySchedule.ts` return a `grid`; both pages
+    render `ScheduleGrid` and the new skeleton.
+  - `scripts/schedule-grid-smoke-test.ts` (new, then 52 assertions): linked-pair
+    collapse, spans, lanes, lane reuse, the empty grid, palette determinism,
+    and a dev-week mirror. It earned its keep immediately — see Session
+    Notes. (Now 59, after the visual pass added the lane-geometry regression.)
+  - `context/ui-context.md`: new **Schedule Grid** and **Teacher Colors**
+    sections; `context/project-overview.md`: the Dean's "read-only table
+    view" and the Teacher's grouping bullet now describe the grid.
+  - Verified: `npx tsc --noEmit` clean, `npm run lint` 0 errors (5 pre-existing
+    warnings in `convex/_generated/*` and `convex/auth.config.ts`),
+    `npm run build` green, `scheduling-smoke-test.ts` 96/96.
 
 - **Teacher "My Schedule" page — the real read-only view (spec 11)** — full
   unit:
@@ -948,47 +1151,56 @@ Course/Year badges, the summary line, and the loading skeleton.
 
 ## In Progress
 
-- (none — spec 11 was the only open unit; it is now in Completed.)
+- (none — spec 12 was the only open unit; it is now in Completed.)
 
 ## Next Up
 
-1. Sanity-check spec 11 in the browser with a real teacher login: confirm
-   `/teacher/schedule` shows only that teacher's classes under the **MW ·
-   Mon & Wed** and **TTh · Tue & Thu** headings, one line per class (not two
-   lines per Mon/Wed class), the Course/Year `Badge`s, the card layout below
-   `sm` and the table from `sm` up, and the loading skeleton matching the
-   loaded shape. The empty state and cross-teacher isolation can't be seen
-   with the current dev data (one teacher owns all 8 rows) — add a second
-   teacher's subject, regenerate, and log in as each teacher.
-2. Sanity-check spec 10 in the browser with a real Dean login: open
+1. Sanity-check spec 12 in the browser (Dean login for `/dean/schedule`,
+   teacher login for `/teacher/schedule`): confirm the two MW / TTh columns
+   line up with their header cells, the 12 time rows read 7:30 AM to 6:30 PM,
+   a 3-hour class spans three rows in both views, the loading skeleton has
+   the same silhouette, and the legend's colors match the cards. **The
+   sub-column split for overlapping classes has never rendered** — the dev
+   data can't produce an overlap, so give two subjects the same teacher and
+   time in different rooms, regenerate, and look at it. Then check the
+   inverse: a lone class in a column that another time had to split should
+   still be full width.
+2. Sanity-check spec 11 in the browser with a real teacher login: confirm
+   `/teacher/schedule` shows only that teacher's classes, one card per class
+   (not two for a Mon/Wed class), the summary line's class count matching
+   the cards, and the loading skeleton. The empty state and cross-teacher
+   isolation can't be seen with the current dev data (one teacher owns all
+   8 rows) — add a second teacher's subject, regenerate, and log in as each
+   teacher.
+3. Sanity-check spec 10 in the browser with a real Dean login: open
    Optimization, toggle each constraint, drag a weight, save, re-open (the
    values must come back from the `scheduleSettings` row), then generate once
    with a weight on and once with everything off. The dialog's
    loading/error/saving states, the "Save settings" disabled-while-unchanged
    rule, Cancel-discards behavior, the score `Badge` + "lower is better" line,
    and the toast wording have not been eyeballed.
-3. Sanity-check spec 09 in the browser with a real Dean login: force a
+4. Sanity-check spec 09 in the browser with a real Dean login: force a
    generate failure (block a teacher's whole MW pair, or point two subjects at
    one room so it is taken at every shared start) and confirm the
    `ConflictAlert` names the room + the class holding it + the overlapping
    time, or the teacher + the blocked window, with one alert per failed
    subject and the accordion when several fail. The alert's border/destructive
    styling has not been eyeballed.
-4. Sanity-check spec 08 in the browser with a real Dean login: switch
+5. Sanity-check spec 08 in the browser with a real Dean login: switch
    through every Course + Year group in the `/dean/schedule` selector,
    confirm each view shows only that group's sessions, and confirm a
    group with subjects but no placed classes renders the shared
    `EmptyState`. The selector's grouped `Select` (per-course group
    labels, per-year class counts) has not been eyeballed — group labels
    and mobile layout especially.
-5. Sanity-check spec 07 in the browser with a real Dean login: add/edit/
+6. Sanity-check spec 07 in the browser with a real Dean login: add/edit/
    delete a Course at `/dean/courses`, create a Subject with the new
    Course/Year selects (and confirm submit is blocked without them), and
    read the Course/Year columns in the subjects table. Lint/build/smoke are
    green and the dev data is migrated, but the UI has not been eyeballed.
-6. Dean schedule view polish / student-facing schedule (out of scope until
+7. Dean schedule view polish / student-facing schedule (out of scope until
    confirmed in specs)
-7. Sanity-check the 2-column availability grid in the browser (real teacher
+8. Sanity-check the 2-column availability grid in the browser (real teacher
    login): red blocked cells, save/reset round-trip, tooltip labels — the
    pattern keys and grid are covered by lint/build/smoke, but the visual/UX
    hasn't been eyeballed
@@ -1044,6 +1256,13 @@ Course/Year badges, the summary line, and the loading skeleton.
   re-runs the CSP scoped to one group (and must re-check the other groups'
   fixed rows for teacher/room clashes) or accepts cross-course conflicts.
   Nothing in the current UI implies that, so it stays out of scope.
+  **Update:** the engine now carries a fourth hard constraint — two subjects of
+  the same course *and* year may not overlap (see Completed). It is the one
+  rule that is scoped *within* a group rather than across the whole week, which
+  is exactly why a per-course-year regenerate stays awkward: the regenerate
+  would be free to ignore the new constraint for groups it does not touch,
+  because those groups' rows are fixed. The current global pass has no such
+  hole, which is an argument for leaving it global.
 - **No calendar / drag-and-drop / color legend exists** (spec 08 assumed
   them): there is no `components/schedule/ScheduleCalendar.tsx`, no
   drag-and-drop or auto-rescheduling code, and no per-teacher color legend
@@ -1224,6 +1443,15 @@ Course/Year badges, the summary line, and the loading skeleton.
   subjects pointing at a missing room (rendered as `—`). Decide whether
   Room delete should be blocked while subjects reference the room, or
   clear/reassign those subjects on delete.
+- **Eight palette slots means two teachers can collide past eight (spec 12)**:
+  accepted for the prototype and recorded rather than solved. Beyond ~8
+  distinct teachers, two of them will hash to the same color and the legend
+  will be ambiguous. If that bites, the fix is a real assignment (a table, or
+  an index into a larger palette seeded from `userId` creation order) — not a
+  cleverer hash, which would just make collisions rarer and still wrong.
+  Related: the legend distinguishes teachers by color alone, so it is also a
+  color-only legend; the cards carry subject + teacher text, which is the
+  non-color path to the same information.
 - The `Legacy Lab`/`Legacy Lecture` fallback rooms created by
   `convex/migrations.ts` are editable/deletable from the Dean room UI —
   re-assign/move the `SE 101` subject first if the fallback room is
@@ -1231,6 +1459,35 @@ Course/Year badges, the summary line, and the loading skeleton.
 
 ## Architecture Decisions
 
+- **The grid's shape is data, not a rendering concern (spec 12)**: every
+  block arrives pre-positioned (`startSlot`, `span`, `lane`, `lanes`,
+  `columnIndex`) from `buildScheduleGrid`, and the component only maps that to
+  CSS `grid-area`. A component that derived "which row does 14:00 land in"
+  would be a second, driftable copy of the slot arithmetic — and it would be a
+  copy in *each* of the two views.
+- **A subject's linked pair is one block, not two (spec 12)**: Mon+Wed is one
+  column, so the two sessions are the same class seen on two days. Drawing a
+  card per session would show the school two of a class it has one of, in the
+  one place the user goes to check. A pair only collapses when the time and
+  room actually match (`isLinkedPair`); a mismatched pair stays two blocks,
+  because claiming a shared time the two days do not share is worse than
+  showing the duplication.
+- **Lanes are per day pair, and a class that overlaps nothing takes the full
+  width (spec 12)**: MW and TTh never compete for the same sub-column, and a
+  block in a cluster of one spans its whole day pair. This was a real bug
+  first — lanes were assigned across the whole grid, so a class in the MW
+  column pushed an unrelated class in the TTh column into a second lane. The
+  smoke test's dev-week mirror is the case that caught it; see Session Notes.
+- **A time that doesn't sit on the slot grid is dropped, not rounded (spec
+  12)**: `slotIndexOf` now requires an exact slot boundary instead of
+  `Math.round`. Rounding put a 1:00 PM class in the 1:30 PM row — a card
+  confidently labelled with the wrong time. Unreachable through `generate`
+  (its validator keeps durations on slot multiples inside school hours), so
+  this only decides how a bad row fails: invisibly, or under the wrong label.
+- **Teacher color is a hash of the Clerk `userId`, not a stored assignment
+  (spec 12)**: eight slots, deterministic, no table, no admin UI to keep in
+  sync, and a teacher keeps their color across devices and rebuilds. The
+  tradeoff is recorded in Open Questions.
 - **The teacher's schedule is filtered on the server from the verified
   identity, not from a client-supplied id (spec 11)**: `schedule.listMine`
   takes no arguments and reads the `by_teacherId` index with
@@ -1701,3 +1958,44 @@ Course/Year badges, the summary line, and the loading skeleton.
   failed server-side in this Convex version, so migrations and data checks
   were verified via their `{ cleaned }` / `{ backfilled }` results +
   `convex data` instead.
+- Spec: `context/spec/12-design-schedule-dean.md` (schedule as a grid for Dean
+  and Teacher) — same shape of surprise as 08:11, and the prediction held
+  again: **its assumptions about existing code were wrong in ways that would
+  have produced broken code if trusted.** It described replacing "the current
+  table/list" for a Dean view that `ScheduleTable` and a Teacher view that
+  `MyScheduleTable` indeed provided, so that part was right. It specified
+  column labels `MW — Mon & Wed`, which is what the 2-column availability grid
+  already does — right again. Wrong: it asked for `--teacher-palette` *per
+  teacher* with values in the component, where Tailwind v4 would never emit
+  them (see the decision above — they became eight `@theme inline` tokens plus
+  static class strings); and it wanted a `ScheduleRow[]` model with `classes[]
+  ` and a class-count-per-row, which is a table's shape — the grid needs span
+  + lane + column instead, because a card covers rows rather than belonging to
+  one. A row-with-classes model cannot express a 3-hour class without either
+  duplicating it into three rows or special-casing the span.
+- Unit: schedule grid (spec 12) — see Completed. No Convex change at all: the
+  generated `schedules` rows already carry subject, teacher, room, and the
+  chosen `dayPattern` (spec 08), so the grid is pure client-side derivation.
+- **The grid smoke test paid for itself on its first run.** It was written as
+  a throwaway script, and immediately earned promotion to
+  `scripts/schedule-grid-smoke-test.ts` because of what it caught:
+  - **Lanes were assigned across the whole grid instead of per column.** An
+    MW class at 7:30 pushed an unrelated TTh class at 7:30 into a second lane,
+    narrowing both cards for no reason. The unit tests all passed because
+    every fixture so far put classes in a single column. What exposed it was
+    making the dev-week mirror realistic — which meant noticing that the real
+    dev data has one teacher owning all four labs, so two labs *cannot* share
+    a time (the CSP forbids the double-book). Every previous fixture had
+    quietly assumed a case the data can't produce, and the mirror was the
+    first one with both columns populated. Lesson: **a fixture built from the
+    real seed data is worth more than N synthetic ones** — it is the only one
+    that can be wrong about the domain.
+  - **Non-slot-aligned times were rounded into the wrong row** (`Math.round`
+    put 1:00 PM in the 1:30 PM slot). Now dropped instead, so a malformed row
+    is invisible rather than confidently mislabelled.
+  - My first two "failures" were **wrong test expectations, not bugs** — I
+    asserted 3 lanes for a case where one class ended exactly as another began
+    (correctly reusing the freed lane), and I built a dev mirror with the same
+    teacher double-booked. Worth remembering that a failing test is a claim
+    about the spec of the thing, and the first move is to work out which side
+    is wrong.

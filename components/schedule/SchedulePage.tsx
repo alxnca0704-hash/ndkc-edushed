@@ -5,10 +5,10 @@ import { CalendarClock, Loader2, SlidersHorizontal, WandSparkles } from "lucide-
 import { toast } from "sonner";
 
 import { ScheduleGenerationError } from "@/components/schedule/ScheduleGenerationError";
+import { ScheduleGrid } from "@/components/schedule/ScheduleGrid";
+import { ScheduleGridSkeleton } from "@/components/schedule/ScheduleGridSkeleton";
 import { ScheduleGroupSelector } from "@/components/schedule/ScheduleGroupSelector";
 import { ScheduleGroupSelectorSkeleton } from "@/components/schedule/ScheduleGroupSelectorSkeleton";
-import { ScheduleTable } from "@/components/schedule/ScheduleTable";
-import { ScheduleTableSkeleton } from "@/components/schedule/ScheduleTableSkeleton";
 import { SoftConstraintSettings } from "@/components/schedule/SoftConstraintSettings";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { ErrorState } from "@/components/shared/ErrorState";
@@ -23,6 +23,7 @@ export function SchedulePage() {
     groups,
     activeKey,
     activeGroup,
+    grid,
     selectGroup,
     isLoading,
     isEmpty,
@@ -65,7 +66,7 @@ export function SchedulePage() {
 
   const renderContent = () => {
     if (isLoading) {
-      return <ScheduleTableSkeleton />;
+      return <ScheduleGridSkeleton />;
     }
 
     if (error) {
@@ -133,15 +134,17 @@ export function SchedulePage() {
       );
     }
 
-    return <ScheduleTable sessions={activeSessions} />;
+    return <ScheduleGrid grid={grid} />;
   };
 
   const summary = isLoading
     ? "Loading the generated schedule…"
     : isEmpty
       ? "No subjects to schedule yet."
-      : `${activeSessions.length} ${
-          activeSessions.length === 1 ? "class" : "classes"
+      : // `classCount`, not the session count: a Mon+Wed pair is one class
+        // drawn once in the MW column, and the number has to match the cards.
+        `${grid.classCount} ${
+          grid.classCount === 1 ? "class" : "classes"
         } scheduled this week for ${activeGroup?.label ?? "this course and year"}.`;
 
   // Only rendered when the GA actually ran — with every soft constraint off

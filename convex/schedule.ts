@@ -280,6 +280,8 @@ function buildSchedulingInput(
         roomId: subject.roomId,
         requiredRoomType: room?.type ?? subject.roomType,
         durationMinutes: subject.durationMinutes,
+        courseId: subject.courseId,
+        year: subject.year,
       };
     }),
     availability: normalizedAvailability,

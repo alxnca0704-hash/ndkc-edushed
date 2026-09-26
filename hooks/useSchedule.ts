@@ -5,13 +5,14 @@ import { useCallback, useMemo, useState } from "react";
 
 import { api } from "@/convex/_generated/api";
 import { SUBJECT_YEAR_LEVEL_LABELS } from "@/constants/courses";
-import { sortSessionsByWeek } from "@/lib/schedule";
+import { buildScheduleGrid, sortSessionsByWeek } from "@/lib/schedule";
 import type { SubjectYearLevel } from "@/types/course";
 import type { OptimizationResult } from "@/types/scheduleSettings";
 import type {
   GenerateScheduleResult,
   GroupedSchedule,
   InfeasibleSubject,
+  ScheduleGrid,
   ScheduleSession,
 } from "@/types/schedule";
 
@@ -19,6 +20,12 @@ export interface UseScheduleResult {
   groups: GroupedSchedule[];
   activeKey: string | null;
   activeGroup: GroupedSchedule | null;
+  /**
+   * The active group's week as a grid — one column per day pair, one row per
+   * time block. Empty until a group is selected, which is why it is derived
+   * from `activeGroup` rather than from every session in the week.
+   */
+  grid: ScheduleGrid;
   selectGroup: (key: string) => void;
   isLoading: boolean;
   isEmpty: boolean;
@@ -141,6 +148,11 @@ export function useSchedule(): UseScheduleResult {
     groups.find((group) => group.key === preferredKey) ?? groups[0] ?? null;
   const isEmpty = !isLoading && !error && groups.length === 0;
 
+  const grid = useMemo(
+    () => buildScheduleGrid(activeGroup?.sessions ?? []),
+    [activeGroup],
+  );
+
   const selectGroup = useCallback((key: string) => {
     setPreferredKey(key);
   }, []);
@@ -172,6 +184,7 @@ export function useSchedule(): UseScheduleResult {
     groups,
     activeKey: activeGroup?.key ?? null,
     activeGroup,
+    grid,
     selectGroup,
     isLoading,
     isEmpty,

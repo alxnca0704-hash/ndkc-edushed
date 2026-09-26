@@ -2,6 +2,9 @@ export type SchedulingRoomType = "lecture" | "lab";
 
 export type SchedulingDayPattern = "MW" | "TTh";
 
+/** Academic year a subject belongs to. Mirrors `subjects.year` in the schema. */
+export type SchedulingYear = 1 | 2 | 3 | 4;
+
 export interface SchedulingDay {
   index: number;
   name: string;
@@ -32,6 +35,22 @@ export interface SchedulingSubject {
   roomId: string;
   requiredRoomType: SchedulingRoomType;
   durationMinutes: number;
+  /**
+   * Course and year this subject belongs to. Two subjects overlap illegally
+   * only when BOTH match, so a subject can share a room or a time with another
+   * course, and with the same course in a different year.
+   */
+  courseId: string;
+  year: SchedulingYear;
+}
+
+/**
+ * Identity of the "class group" that must never be in two lessons at once: the
+ * course plus the year. Kept as a single helper so the CSP, the validator and
+ * the diagnostics can never disagree about what counts as a clash.
+ */
+export function courseYearKey(subject: SchedulingSubject): string {
+  return `${subject.courseId}:${subject.year}`;
 }
 
 export interface BlockedPattern {
@@ -70,6 +89,7 @@ export interface FreeWindow {
 export type InfeasibilityCause =
   | "no-shared-teacher-window"
   | "no-room-available"
+  | "course-year-busy"
   | "unknown";
 
 /**
@@ -83,6 +103,9 @@ export type InfeasibilityCause =
  * - `no-shared-window` — the teacher is free, but their own already-placed
  *   classes differ between the two days of the pair, so no start time fits
  *   both.
+ * - `course-year-conflict` — every start the teacher and room could take is
+ *   already held by another subject of the SAME course and year, so this class
+ *   group would be in two lessons at once.
  * - `arrangement-conflict` — the subject fits on its own, but no full
  *   arrangement of the week does.
  */
@@ -90,6 +113,7 @@ export type ConflictKind =
   | "room-occupied"
   | "teacher-unavailable"
   | "no-shared-window"
+  | "course-year-conflict"
   | "arrangement-conflict";
 
 /** One already-formatted "what/where/when" pair, rendered as-is by the UI. */

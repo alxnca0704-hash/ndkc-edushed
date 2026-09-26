@@ -7,6 +7,7 @@ import {
   Layers,
   TriangleAlert,
   UserX,
+  UsersRound,
 } from "lucide-react";
 
 import {
@@ -28,6 +29,7 @@ const CONFLICT_ICONS: Record<ConflictKind, LucideIcon> = {
   "room-occupied": DoorClosed,
   "teacher-unavailable": UserX,
   "no-shared-window": CalendarX,
+  "course-year-conflict": UsersRound,
   "arrangement-conflict": Layers,
 };
 
@@ -35,6 +37,7 @@ const CONFLICT_LABELS: Record<ConflictKind, string> = {
   "room-occupied": "Room occupied",
   "teacher-unavailable": "Teacher unavailable",
   "no-shared-window": "No shared window",
+  "course-year-conflict": "Course & year clash",
   "arrangement-conflict": "Placement conflict",
 };
 

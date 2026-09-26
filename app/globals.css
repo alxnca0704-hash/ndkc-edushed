@@ -42,6 +42,11 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-schedule-column: var(--schedule-column);
+  --color-schedule-card: var(--schedule-card);
+  --color-schedule-card-foreground: var(--schedule-card-foreground);
+  --color-schedule-card-muted: var(--schedule-card-muted);
+  --color-schedule-rule: var(--schedule-rule);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -91,6 +96,31 @@ body {
   --sidebar-accent-foreground: oklch(0.32 0.1 152);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  /* Height of one 60-minute time-block row in the schedule grid. Fixed so a
+     class spanning several slots lines up across both day-pair columns. Sized
+     against the card's single-slot content (subject + teacher, ~34px) plus its
+     padding, so a 60-minute class never clips. */
+  --schedule-row-height: 3.5rem;
+  /* The schedule reads as green on purpose: it is the one surface on the page
+     that is a table of real classes, and a neutral `bg-card` block on a white
+     page was invisible. Hue 152 is the app's existing green (`--accent-primary`,
+     `--sidebar-accent`), so this tints the timetable rather than inventing a
+     second green. The four steps, darkest surface to lightest ink:
+     `--schedule-column` washes the whole day pair, `--schedule-rule` is the
+     hour hairline, `--schedule-card` is the block, and
+     `--schedule-card-muted` is the teacher/room line on it. Cards are lifted off
+     the column with a shadow, so no border is needed to separate them. */
+  --schedule-column: oklch(0.968 0.017 152);
+  --schedule-rule: oklch(0.87 0.045 152);
+  --schedule-card: oklch(0.935 0.055 152);
+  --schedule-card-foreground: oklch(0.19 0.02 152);
+  --schedule-card-muted: oklch(0.44 0.06 152);
+}
+
+@media (width >= 40rem) {
+  :root {
+    --schedule-row-height: 4rem;
+  }
 }
 
 .dark {
@@ -128,6 +158,11 @@ body {
   --sidebar-accent-foreground: oklch(0.22 0.08 152);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --schedule-column: oklch(0.185 0.018 152);
+  --schedule-rule: oklch(0.3 0.035 152);
+  --schedule-card: oklch(0.27 0.055 152);
+  --schedule-card-foreground: oklch(0.97 0.012 152);
+  --schedule-card-muted: oklch(0.79 0.06 152);
 }
 
 @layer base {

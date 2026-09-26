@@ -1,5 +1,6 @@
 import { DAY_PATTERN_DAY_INDEXES } from "../../constants/dayPatterns";
 import type { PlacedSession, SchedulingInput } from "./types";
+import { courseYearKey } from "./types";
 import { blockedByDayFor, intervalsOverlap } from "./util";
 
 export interface ScheduleValidationResult {
@@ -103,6 +104,7 @@ export function validateSolution(
 
   const teacherDays = new Map<string, Map<number, DayInterval[]>>();
   const roomDays = new Map<string, Map<number, DayInterval[]>>();
+  const courseYearDays = new Map<string, Map<number, DayInterval[]>>();
 
   for (const placement of solution) {
     const subject = subjectById.get(placement.subjectId);
@@ -196,11 +198,34 @@ export function validateSolution(
       );
     }
 
+    const courseYear = courseYearKey(subject);
+    const courseYearOverlap = dayIntervalsFor(
+      courseYearDays,
+      courseYear,
+      placement.dayIndex,
+    ).some((interval) =>
+      intervalsOverlap(
+        interval.startMinutes,
+        interval.endMinutes,
+        placement.startMinutes,
+        placement.endMinutes,
+      ),
+    );
+    if (courseYearOverlap) {
+      violations.push(
+        `"${subject.name}" overlaps another class of the same course and year (${subject.courseId}, year ${subject.year}) on day ${placement.dayIndex}`,
+      );
+    }
+
     dayIntervalsFor(teacherDays, placement.teacherId, placement.dayIndex).push({
       startMinutes: placement.startMinutes,
       endMinutes: placement.endMinutes,
     });
     dayIntervalsFor(roomDays, placement.roomId, placement.dayIndex).push({
+      startMinutes: placement.startMinutes,
+      endMinutes: placement.endMinutes,
+    });
+    dayIntervalsFor(courseYearDays, courseYear, placement.dayIndex).push({
       startMinutes: placement.startMinutes,
       endMinutes: placement.endMinutes,
     });

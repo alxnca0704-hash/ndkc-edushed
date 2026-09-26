@@ -4,22 +4,25 @@ import { useQuery } from "convex/react";
 import { useMemo } from "react";
 
 import { api } from "@/convex/_generated/api";
-import { groupSessionsByDayPattern, sortSessionsByWeek } from "@/lib/schedule";
-import type { MyScheduleGroup, ScheduleSession } from "@/types/schedule";
+import { buildScheduleGrid, sortSessionsByWeek } from "@/lib/schedule";
+import type { ScheduleGrid, ScheduleSession } from "@/types/schedule";
 
 const EMPTY_SESSIONS: readonly ScheduleSession[] = [];
+const EMPTY_GRID: ScheduleGrid = buildScheduleGrid(EMPTY_SESSIONS);
 
 export interface UseMyScheduleResult {
   /**
-   * This teacher's own sessions grouped by day pattern (MW, then TTh), each
-   * group's rows in week order with a subject's linked pair collapsed into one
-   * line. Every field the table shows is already denormalized onto the
-   * generated row, so nothing is joined here.
+   * This teacher's own week as a grid: a column per day pair, a row per time
+   * block, each class spanning the slots it occupies. Derived entirely from the
+   * generated rows, which already carry subject, teacher, room, course, year
+   * and the chosen `dayPattern`, so nothing is joined here.
    */
-  groups: readonly MyScheduleGroup[];
-  /** Distinct subjects across the groups. */
+  grid: ScheduleGrid;
+  /** Distinct subjects across the week. */
   subjectCount: number;
-  /** Placed sessions across the groups — two per subject for a linked pair. */
+  /** Cards the grid draws — one per class, not one per day it meets. */
+  classCount: number;
+  /** Placed sessions across the week — two per subject for a linked pair. */
   sessionCount: number;
   isLoading: boolean;
   isEmpty: boolean;
@@ -41,15 +44,19 @@ export function useMySchedule(): UseMyScheduleResult {
   );
 
   // Derived at render time, not through an effect: a regenerate reshuffles the
-  // groups without the page holding stale state.
-  const groups = useMemo(() => groupSessionsByDayPattern(sessions), [sessions]);
+  // week without the page holding stale state.
+  const grid = useMemo(
+    () => (sessions.length === 0 ? EMPTY_GRID : buildScheduleGrid(sessions)),
+    [sessions],
+  );
 
-  const isEmpty = !isLoading && !error && groups.length === 0;
+  const isEmpty = !isLoading && !error && grid.sessionCount === 0;
 
   return {
-    groups,
-    subjectCount: groups.reduce((total, group) => total + group.rows.length, 0),
-    sessionCount: sessions.length,
+    grid,
+    subjectCount: grid.subjectCount,
+    classCount: grid.classCount,
+    sessionCount: grid.sessionCount,
     isLoading,
     isEmpty,
     error,
