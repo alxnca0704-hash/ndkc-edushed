@@ -19,8 +19,15 @@ import type {
 import { DAY_PATTERN_DAY_INDEXES } from "../constants/dayPatterns";
 import {
   AVAILABILITY_DAYS,
+  AVAILABILITY_SLOT_DURATION_MINUTES,
   AVAILABILITY_TIME_SLOTS,
 } from "../constants/availability";
+import {
+  PRESSURE_TEST_BLOCKED_PATTERN,
+  PRESSURE_TEST_BLOCKED_SLOTS,
+  PRESSURE_TEST_ROOMS,
+  PRESSURE_TEST_SUBJECTS,
+} from "../constants/pressureTest";
 
 const DAYS: SchedulingDay[] = AVAILABILITY_DAYS.map((day) => ({
   index: day.index,
@@ -675,6 +682,226 @@ function main() {
         `"${subject.name}" lands on Mon + Wed at the same time in the same room`,
       );
     }
+  }
+
+  console.log(
+    "GA: the soft-constraint pressure scenario (constants/pressureTest.ts, seeded by convex/migrations.ts)",
+  );
+  // Built from the real seed constants so this section cannot drift from the
+  // data the migrations actually write. The four hand-entered subjects mirror
+  // the deployment as it stood before the scenario was seeded.
+  const pressureTeacher = "user_3Jj4s0y60y6o4HCpNHhm2HoY4eX";
+  const pressureRooms: SchedulingRoom[] = [
+    { id: "room-it-lab-1", name: "IT LAB 1", type: "lab" },
+    { id: "room-it-lab-2", name: "IT LAB 2", type: "lab" },
+    { id: "room-it-lab-3", name: "IT LAB 3", type: "lab" },
+    ...PRESSURE_TEST_ROOMS.map((room, index) => ({
+      id: `room-pressure-${index}`,
+      name: room.name,
+      type: room.type,
+    })),
+  ];
+  const roomIdFor = (name: string, type: "lecture" | "lab"): string => {
+    const room = pressureRooms.find((candidate) => candidate.name === name);
+    if (!room || room.type !== type) {
+      throw new Error(`pressure-test seed wants a ${type} room named "${name}"`);
+    }
+    return room.id;
+  };
+  const handEnteredSubjects: SchedulingSubject[] = [
+    { id: "cc-106", name: "CC 106", durationMinutes: 180, courseCode: "BSIT" },
+    { id: "hci-101", name: "HCI 101", durationMinutes: 120, courseCode: "BSIT" },
+    { id: "os-101", name: "OS 101", durationMinutes: 180, courseCode: "BSCS" },
+    { id: "se-101", name: "SE 101", durationMinutes: 180, courseCode: "BSCS" },
+  ].map((subject) => ({
+    id: subject.id,
+    name: subject.name,
+    teacherId: pressureTeacher,
+    roomId: subject.courseCode === "BSIT" ? "room-it-lab-2" : "room-it-lab-1",
+    requiredRoomType: "lab" as const,
+    durationMinutes: subject.durationMinutes,
+  }));
+  const seededSubjects: SchedulingSubject[] = PRESSURE_TEST_SUBJECTS.map(
+    (seed) => ({
+      id: seed.name.toLowerCase().replace(/\s+/g, "-"),
+      name: seed.name,
+      teacherId: pressureTeacher,
+      roomId: roomIdFor(seed.roomName, seed.roomType),
+      requiredRoomType: seed.roomType,
+      durationMinutes: seed.durationMinutes,
+    }),
+  );
+  const pressureAvailability: SchedulingAvailability[] = [
+    {
+      teacherId: pressureTeacher,
+      blockedByPattern: [
+        {
+          dayPattern: PRESSURE_TEST_BLOCKED_PATTERN.dayPattern,
+          slotIndexes: PRESSURE_TEST_BLOCKED_SLOTS.map((key) =>
+            Number(key.split("-")[1]),
+          ),
+        },
+      ],
+    },
+  ];
+  const pressureWeights: SoftConstraintWeights = {
+    workloadBalance: 6,
+    daySpread: 5,
+    gapMinimization: 9,
+  };
+
+  check(
+    PRESSURE_TEST_SUBJECTS.length === 5,
+    "the scenario seeds 5 extra subjects",
+  );
+  check(
+    PRESSURE_TEST_SUBJECTS.every(
+      (seed) =>
+        seed.durationMinutes > 0 &&
+        seed.durationMinutes % AVAILABILITY_SLOT_DURATION_MINUTES === 0,
+    ),
+    "every seeded duration is a whole number of 60-minute slots (90 would be invalid-duration)",
+  );
+  check(
+    PRESSURE_TEST_BLOCKED_SLOTS.length === 1 &&
+      PRESSURE_TEST_BLOCKED_PATTERN.dayPattern === "MW",
+    "the scenario blocks exactly one mid-day hour, on MW only, so TTh stays free",
+  );
+
+  // Scenario 1 — the seeded teacher now owns all nine subjects.
+  const saturatedInput = buildInput(
+    [...handEnteredSubjects, ...seededSubjects],
+    pressureRooms,
+    pressureAvailability,
+  );
+  const saturatedResult = runCSP(saturatedInput);
+  check(
+    saturatedResult.ok,
+    "the concentrated load is still solvable (pressure, not infeasibility)",
+  );
+  if (saturatedResult.ok) {
+    const saturatedValidation = validateSolution(
+      saturatedInput,
+      saturatedResult.solution,
+    );
+    check(
+      saturatedValidation.valid &&
+        saturatedResult.solution.length ===
+          (handEnteredSubjects.length + seededSubjects.length) * 2,
+      "all 9 subjects place 18 linked sessions with zero hard-constraint violations",
+    );
+    if (!saturatedValidation.valid) {
+      saturatedValidation.violations.forEach((violation) =>
+        console.error(`  - ${violation}`),
+      );
+    }
+    const saturatedPenalties = measurePenalties(saturatedResult.solution);
+    check(
+      saturatedPenalties.workloadBalance > 0,
+      `the raw CSP result is already overloaded (workload penalty ${saturatedPenalties.workloadBalance})`,
+    );
+
+    // "All soft constraints off" is the action's GA-skip path, exercised on
+    // the real scenario rather than only on the toy input above.
+    const saturatedOff = runGA(saturatedInput, saturatedResult.solution, {
+      weights: NO_PREFERENCES,
+      random: seededRandom(1),
+    });
+    check(
+      samePlacements(saturatedOff.schedule, saturatedResult.solution),
+      "OFF: every weight 0 returns the raw CSP schedule exactly (no GA work spent)",
+    );
+
+    // "Soft constraints on" is the same input with the Dean's weights. Assert
+    // the invariants, then record what the search can and cannot do here.
+    let bestFitness = Number.POSITIVE_INFINITY;
+    let bestSchedule: PlacedSession[] | null = null;
+    let allValid = true;
+    for (const seed of [1, 7, 42, 1234, 99999, 31337]) {
+      const ga = runGA(saturatedInput, saturatedResult.solution, {
+        weights: pressureWeights,
+        random: seededRandom(seed),
+      });
+      if (!validateSolution(saturatedInput, ga.schedule).valid) {
+        allValid = false;
+      }
+      if (ga.fitness < bestFitness) {
+        bestFitness = ga.fitness;
+        bestSchedule = ga.schedule;
+      }
+    }
+    const seedScore = weightedScore(saturatedResult.solution, pressureWeights);
+    check(
+      allValid,
+      "ON: every GA run still passes all hard constraints",
+    );
+    check(
+      bestFitness <= seedScore,
+      `ON: the GA never returns a worse score than the CSP (${bestFitness} <= ${seedScore})`,
+    );
+    check(
+      bestSchedule !== null &&
+        [...handEnteredSubjects, ...seededSubjects].every((subject) =>
+          assertPatternPair(
+            bestSchedule as PlacedSession[],
+            subject,
+            patternDaysForSubject(
+              bestSchedule as PlacedSession[],
+              subject.id,
+            ),
+          ),
+        ),
+      "ON: the optimized schedule keeps all 9 subjects' day-pairs intact",
+    );
+    console.log(
+      `       OFF fitness ${seedScore} vs best ON fitness ${bestFitness} over 6 seeds (penalties ${JSON.stringify(saturatedPenalties)})`,
+    );
+    // The load-bearing finding: with all 9 subjects on ONE teacher the weighted
+    // score cannot move. Every penalty is an invariant of the load, not of the
+    // arrangement — see the Architecture Decisions note in progress-tracker.md.
+    // If this ever fails, the scenario has regained real slack and the soft
+    // constraints became observable again.
+    check(
+      bestFitness === seedScore,
+      "ON: the concentrated load leaves the GA nothing to improve (all three penalties are invariants of a 9-subject load, so OFF == ON)",
+    );
+  }
+
+  // Scenario 2 — the same five seeded subjects on a teacher who has nothing
+  // else. This is the load level the scenario was designed around, and it is
+  // where the soft constraints are actually observable.
+  const pressureInput = buildInput(
+    seededSubjects,
+    pressureRooms,
+    pressureAvailability,
+  );
+  const pressureResult = runCSP(pressureInput);
+  check(pressureResult.ok, "the 5 seeded subjects alone are solvable");
+  if (pressureResult.ok) {
+    const pressureCspPenalties = measurePenalties(pressureResult.solution);
+    let bestPressureFitness = Number.POSITIVE_INFINITY;
+    for (const seed of [1, 7, 42, 1234, 99999, 31337]) {
+      const ga = runGA(pressureInput, pressureResult.solution, {
+        weights: pressureWeights,
+        random: seededRandom(seed),
+      });
+      check(
+        validateSolution(pressureInput, ga.schedule).valid,
+        `ON (5 alone): seed ${seed} output is hard-constraint valid`,
+      );
+      bestPressureFitness = Math.min(bestPressureFitness, ga.fitness);
+    }
+    const pressureSeedScore = weightedScore(
+      pressureResult.solution,
+      pressureWeights,
+    );
+    console.log(
+      `       5 subjects alone: OFF fitness ${pressureSeedScore} -> best ON fitness ${bestPressureFitness} over 6 seeds (OFF penalties ${JSON.stringify(pressureCspPenalties)})`,
+    );
+    check(
+      bestPressureFitness < pressureSeedScore,
+      "ON (5 alone): the soft constraints visibly improve the arrangement, which is the whole point of the scenario",
+    );
   }
 
   console.log("CSP: fully-blocked teachers report both patterns for every subject");

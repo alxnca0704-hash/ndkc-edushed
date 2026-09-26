@@ -1,5 +1,7 @@
 import { internalMutation } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
+import { v } from "convex/values";
 
 import { AVAILABILITY_TIME_SLOTS } from "../constants/availability";
 import { DEFAULT_COURSES } from "../constants/courses";
@@ -7,6 +9,11 @@ import {
   DAY_PATTERN_DAY_INDEXES,
   type DayPattern,
 } from "../constants/dayPatterns";
+import {
+  PRESSURE_TEST_BLOCKED_SLOTS,
+  PRESSURE_TEST_ROOMS,
+  PRESSURE_TEST_SUBJECTS,
+} from "../constants/pressureTest";
 
 type LegacySubject = Omit<Doc<"subjects">, "courseId" | "year"> & {
   roomType?: "lecture" | "lab";
@@ -373,5 +380,242 @@ export const backfillSubjectCourseAndYear = internalMutation({
     }
 
     return { backfilled, courseCode: fallbackCourse.code };
+  },
+});
+
+/*
+ * Soft-constraint pressure scenario — see `constants/pressureTest.ts` for what
+ * this is for and why the numbers are what they are. Three small, idempotent
+ * mutations in dependency order, matching the existing "run it with
+ * `npx convex run 'migrations:…'`" mechanism (`seedCourses`).
+ */
+
+interface SeedTeacher {
+  /** The Clerk `userId` that `subjects.teacherId` and `availability.teacherId` store. */
+  clerkId: string;
+  /** Human-readable, for the mutation's result so a re-run is legible. */
+  label: string;
+}
+
+function seedTeacherLabel(teacher: {
+  firstName?: string;
+  lastName?: string;
+  email: string;
+}): string {
+  const name = [teacher.firstName, teacher.lastName].filter(Boolean).join(" ").trim();
+  return name || teacher.email;
+}
+
+/**
+ * The pressure subjects go to an **existing** seeded teacher, never a new one —
+ * a subject's `teacherId` is a Clerk `userId` (Invariant 3), so a teacher that
+ * only exists in Convex would be invisible to the Dean's dropdown and to the
+ * teacher's own "My Schedule" view.
+ *
+ * Teacher accounts reach Convex either by the teacher logging in
+ * (`users:upsertUser`) or by the Dean opening the Subjects page
+ * (`teachers:syncFromClerk`), so resolution reads the `users` table. With no
+ * `teacherEmail` it reuses the only teacher when there is exactly one, and
+ * refuses to guess otherwise.
+ */
+async function resolveSeedTeacher(
+  ctx: MutationCtx,
+  teacherEmail: string | undefined,
+): Promise<SeedTeacher> {
+  const teachers = await ctx.db
+    .query("users")
+    .withIndex("by_role", (q) => q.eq("role", "teacher"))
+    .collect();
+
+  if (teacherEmail) {
+    const wanted = teacherEmail.trim().toLowerCase();
+    const match = teachers.find(
+      (teacher) => teacher.email.trim().toLowerCase() === wanted,
+    );
+
+    if (!match) {
+      throw new Error(
+        `No teacher account with the email "${teacherEmail}" has synced into Convex yet. Log in as that teacher, or open the Dean's Subjects page (which syncs teachers from Clerk), then re-run.`,
+      );
+    }
+
+    return { clerkId: match.clerkId, label: seedTeacherLabel(match) };
+  }
+
+  if (teachers.length === 1) {
+    const [only] = teachers;
+    return { clerkId: only.clerkId, label: seedTeacherLabel(only) };
+  }
+
+  if (teachers.length === 0) {
+    throw new Error(
+      "No teacher accounts have synced into Convex yet. Log in as a teacher, or open the Dean's Subjects page (which syncs teachers from Clerk), then re-run.",
+    );
+  }
+
+  throw new Error(
+    `Found ${teachers.length} teacher accounts, so this seed cannot guess which one to use. Re-run with {"teacherEmail": "<the teacher's email>"}.`,
+  );
+}
+
+function seedKey(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+/**
+ * Adds the lecture rooms the pressure subjects need. The deployment already has
+ * lab rooms, so only the missing type is seeded. Idempotent: a room whose name
+ * already exists is left alone (case-insensitively, so a re-run can never leave
+ * a near-duplicate behind), so a second run reports 0.
+ */
+export const seedPressureTestRooms = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const existing = await ctx.db.query("rooms").collect();
+    const existingNames = new Set(existing.map((room) => seedKey(room.name)));
+    const seeded: string[] = [];
+
+    for (const room of PRESSURE_TEST_ROOMS) {
+      if (existingNames.has(seedKey(room.name))) {
+        continue;
+      }
+
+      await ctx.db.insert("rooms", {
+        name: room.name,
+        type: room.type,
+        createdAt: now,
+        updatedAt: now,
+      });
+      existingNames.add(seedKey(room.name));
+      seeded.push(room.name);
+    }
+
+    return { seeded: seeded.length, rooms: seeded };
+  },
+});
+
+/**
+ * Adds the five concentrated subjects to the resolved teacher. Idempotent: a
+ * subject already assigned to that teacher under the same name is left alone,
+ * so a second run reports 0 and the four hand-entered subjects are untouched.
+ *
+ * Course and room are resolved by code/name rather than stored as ids, so the
+ * seed is re-runnable against a deployment whose Ids differ. A missing course
+ * or room throws with the mutation to run first, instead of writing a subject
+ * that cannot be scheduled.
+ */
+export const seedPressureTestSubjects = internalMutation({
+  args: { teacherEmail: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const teacher = await resolveSeedTeacher(ctx, args.teacherEmail);
+
+    const courses = await ctx.db.query("courses").collect();
+    const courseByCode = new Map(
+      courses.map((course) => [seedKey(course.code), course]),
+    );
+    const rooms = await ctx.db.query("rooms").collect();
+    const roomByName = new Map(rooms.map((room) => [seedKey(room.name), room]));
+    const existingSubjects = await ctx.db.query("subjects").collect();
+    const existingNames = new Set(
+      existingSubjects
+        .filter((subject) => subject.teacherId === teacher.clerkId)
+        .map((subject) => seedKey(subject.name)),
+    );
+
+    const now = Date.now();
+    const seeded: string[] = [];
+    let skipped = 0;
+
+    for (const seed of PRESSURE_TEST_SUBJECTS) {
+      if (existingNames.has(seedKey(seed.name))) {
+        skipped += 1;
+        continue;
+      }
+
+      const course = courseByCode.get(seedKey(seed.courseCode));
+      if (!course) {
+        throw new Error(
+          `Seed references course "${seed.courseCode}", which does not exist. Run migrations:seedCourses first.`,
+        );
+      }
+
+      const room = roomByName.get(seedKey(seed.roomName));
+      if (!room) {
+        throw new Error(
+          `Seed references room "${seed.roomName}", which does not exist. Run migrations:seedPressureTestRooms first.`,
+        );
+      }
+
+      // A Subject's category is derived from its room (spec 03), so a
+      // type mismatch would silently relabel it.
+      if (room.type !== seed.roomType) {
+        throw new Error(
+          `Seed expects room "${seed.roomName}" to be a ${seed.roomType} room, but it is registered as a ${room.type} room.`,
+        );
+      }
+
+      await ctx.db.insert("subjects", {
+        name: seed.name,
+        durationMinutes: seed.durationMinutes,
+        roomId: room._id,
+        courseId: course._id,
+        year: seed.year,
+        teacherId: teacher.clerkId,
+        createdAt: now,
+        updatedAt: now,
+      });
+      existingNames.add(seedKey(seed.name));
+      seeded.push(seed.name);
+    }
+
+    return {
+      seeded: seeded.length,
+      skipped,
+      teacher: teacher.label,
+      teacherId: teacher.clerkId,
+      subjects: seeded,
+    };
+  },
+});
+
+/**
+ * Blocks the mid-day hour the scenario needs the scheduler to route around.
+ * Idempotent, and **additive only** — it never clears a block the teacher
+ * already set, so re-running it cannot quietly erase real availability. A
+ * second run reports `updated: false`.
+ */
+export const seedPressureTestAvailability = internalMutation({
+  args: { teacherEmail: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const teacher = await resolveSeedTeacher(ctx, args.teacherEmail);
+    const doc = await ctx.db
+      .query("availability")
+      .withIndex("by_teacherId", (q) => q.eq("teacherId", teacher.clerkId))
+      .unique();
+    const current = doc?.blockedSlots ?? [];
+    const added = PRESSURE_TEST_BLOCKED_SLOTS.filter(
+      (slot) => !current.includes(slot),
+    );
+
+    if (added.length === 0) {
+      return { updated: false, teacher: teacher.label, blockedSlots: current };
+    }
+
+    const blockedSlots = [...current, ...added];
+    const now = Date.now();
+
+    if (doc) {
+      await ctx.db.patch(doc._id, { blockedSlots, updatedAt: now });
+    } else {
+      await ctx.db.insert("availability", {
+        teacherId: teacher.clerkId,
+        blockedSlots,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    return { updated: true, teacher: teacher.label, added, blockedSlots };
   },
 });
