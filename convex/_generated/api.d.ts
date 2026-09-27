@@ -18,6 +18,8 @@ import type * as scheduleSettings from "../scheduleSettings.js";
 import type * as scheduling_csp from "../scheduling/csp.js";
 import type * as scheduling_cspDiagnostics from "../scheduling/cspDiagnostics.js";
 import type * as scheduling_ga from "../scheduling/ga.js";
+import type * as scheduling_gaGenerate from "../scheduling/gaGenerate.js";
+import type * as scheduling_repair from "../scheduling/repair.js";
 import type * as scheduling_types from "../scheduling/types.js";
 import type * as scheduling_util from "../scheduling/util.js";
 import type * as scheduling_validate from "../scheduling/validate.js";
@@ -42,6 +44,8 @@ declare const fullApi: ApiFromModules<{
   "scheduling/csp": typeof scheduling_csp;
   "scheduling/cspDiagnostics": typeof scheduling_cspDiagnostics;
   "scheduling/ga": typeof scheduling_ga;
+  "scheduling/gaGenerate": typeof scheduling_gaGenerate;
+  "scheduling/repair": typeof scheduling_repair;
   "scheduling/types": typeof scheduling_types;
   "scheduling/util": typeof scheduling_util;
   "scheduling/validate": typeof scheduling_validate;

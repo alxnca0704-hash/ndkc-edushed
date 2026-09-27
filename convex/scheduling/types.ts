@@ -151,28 +151,6 @@ export type CspInfeasibleReason =
   | { code: "invalid-duration"; message: string }
   | { code: "no-matching-room"; message: string };
 
-export type CspResult =
-  | { ok: true; solution: PlacedSession[] }
-  | { ok: false; reason: CspInfeasibleReason }
-  | { ok: false; reasons: readonly InfeasibilityReason[] };
-
-export interface GaOptions {
-  populationSize?: number;
-  maxIterations?: number;
-  /**
-   * How much each soft constraint counts toward fitness. All-zero means "no
-   * preference" — the caller should skip `runGA` entirely in that case, because
-   * every member would then have the same fitness and the search would be pure
-   * wasted computation.
-   */
-  weights?: SoftConstraintWeights;
-  /**
-   * Source of randomness. Defaults to `Math.random`; a seeded generator makes a
-   * run reproducible, which is what the scheduling smoke test relies on.
-   */
-  random?: () => number;
-}
-
 /**
  * Dean's soft-constraint preferences, 0–10 each. A weight of 0 switches the
  * constraint off: it is removed from the fitness function entirely, so it can
@@ -201,12 +179,4 @@ export interface GaPenalties {
   workloadBalance: number;
   daySpread: number;
   gapMinimization: number;
-}
-
-export interface GaResult {
-  /** Always a hard-constraint-valid schedule. */
-  schedule: PlacedSession[];
-  /** Weighted penalty total. Lower is better; 0 is a perfect score. */
-  fitness: number;
-  penalties: GaPenalties;
 }

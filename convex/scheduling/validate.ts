@@ -8,9 +8,70 @@ export interface ScheduleValidationResult {
   violations: readonly string[];
 }
 
+/**
+ * Which rule a violation breaks.
+ *
+ * The same pass is read three ways: as a boolean plus messages
+ * (`validateSolution`), as a count per rule — that count is `P_H(X)`, the hard
+ * term of the GA's fitness (`countHardViolations`) — and as the identity of the
+ * classes involved, which is what tells a local repair which subjects it is
+ * allowed to move (`collectHardViolations`).
+ */
+export type ViolationKind =
+  | "incomplete-session-pair"
+  | "missing-pattern-day"
+  | "pattern-time-mismatch"
+  | "pattern-room-mismatch"
+  | "unknown-subject"
+  | "unknown-room"
+  | "room-type-mismatch"
+  | "duration-mismatch"
+  | "outside-working-hours"
+  | "invalid-day"
+  | "teacher-unavailable"
+  | "teacher-double-booked"
+  | "room-double-booked"
+  | "course-year-overlap";
+
+/** Every kind, in declaration order, so a zeroed count object can be built. */
+export const VIOLATION_KINDS: readonly ViolationKind[] = [
+  "incomplete-session-pair",
+  "missing-pattern-day",
+  "pattern-time-mismatch",
+  "pattern-room-mismatch",
+  "unknown-subject",
+  "unknown-room",
+  "room-type-mismatch",
+  "duration-mismatch",
+  "outside-working-hours",
+  "invalid-day",
+  "teacher-unavailable",
+  "teacher-double-booked",
+  "room-double-booked",
+  "course-year-overlap",
+];
+
+/** One broken rule: what it is, how to say it, and whose classes it involves. */
+export interface RecordedViolation {
+  kind: ViolationKind;
+  message: string;
+  /**
+   * The subjects this violation is about. A double-booking names both sides, so
+   * a caller can find a whole conflict without re-deriving what overlaps what.
+   */
+  subjectIds: readonly string[];
+}
+
+/** `P_H(X)`, the hard-constraint half of the GA's fitness, as a count. */
+export interface HardViolationCounts {
+  total: number;
+  byKind: Readonly<Record<ViolationKind, number>>;
+}
+
 interface DayInterval {
   startMinutes: number;
   endMinutes: number;
+  subjectId: string;
 }
 
 function slotDurationOf(input: SchedulingInput): number {
@@ -42,11 +103,41 @@ function dayIntervalsFor(
   return list;
 }
 
-export function validateSolution(
+function overlapping(
+  list: readonly DayInterval[],
+  startMinutes: number,
+  endMinutes: number,
+): DayInterval | undefined {
+  return list.find((interval) =>
+    intervalsOverlap(
+      interval.startMinutes,
+      interval.endMinutes,
+      startMinutes,
+      endMinutes,
+    ),
+  );
+}
+
+/**
+ * Every hard-constraint breach in one pass, in the order they are found.
+ *
+ * This is the single definition of "broken" in the engine: `validateSolution`
+ * reads it as a boolean, `countHardViolations` as a count, and a local repair as
+ * a set of subjects. Keeping one collector is what stops the three from ever
+ * disagreeing about what counts as a conflict.
+ */
+export function collectHardViolations(
   input: SchedulingInput,
   solution: readonly PlacedSession[],
-): ScheduleValidationResult {
-  const violations: string[] = [];
+): readonly RecordedViolation[] {
+  const violations: RecordedViolation[] = [];
+  const record = (
+    kind: ViolationKind,
+    message: string,
+    subjectIds: readonly string[],
+  ): void => {
+    violations.push({ kind, message, subjectIds });
+  };
 
   const subjectById = new Map(input.subjects.map((subject) => [subject.id, subject]));
   const roomById = new Map(input.rooms.map((room) => [room.id, room]));
@@ -70,16 +161,20 @@ export function validateSolution(
         : [];
 
     if (sessions.length !== 2) {
-      violations.push(
+      record(
+        "incomplete-session-pair",
         `"${subject.name}" was scheduled ${sessions.length} of 2 required sessions`,
+        [subject.id],
       );
       continue;
     }
 
     for (const dayIndex of patternDays) {
       if (!sessions.some((session) => session.dayIndex === dayIndex)) {
-        violations.push(
+        record(
+          "missing-pattern-day",
           `"${subject.name}" has no session on pattern day ${dayIndex}`,
+          [subject.id],
         );
       }
     }
@@ -91,13 +186,17 @@ export function validateSolution(
       first.startMinutes !== second.startMinutes ||
       first.endMinutes !== second.endMinutes
     ) {
-      violations.push(
+      record(
+        "pattern-time-mismatch",
         `"${subject.name}" sessions are at different times on its two pattern days`,
+        [subject.id],
       );
     }
     if (first.roomId !== second.roomId) {
-      violations.push(
+      record(
+        "pattern-room-mismatch",
         `"${subject.name}" sessions use different rooms on its two pattern days`,
+        [subject.id],
       );
     }
   }
@@ -109,40 +208,56 @@ export function validateSolution(
   for (const placement of solution) {
     const subject = subjectById.get(placement.subjectId);
     if (!subject) {
-      violations.push(
+      record(
+        "unknown-subject",
         `placement references unknown subject "${placement.subjectId}"`,
+        [placement.subjectId],
       );
       continue;
     }
 
     const room = roomById.get(placement.roomId);
     if (!room) {
-      violations.push(
+      record(
+        "unknown-room",
         `"${subject.name}" was placed in unknown room "${placement.roomId}"`,
+        [subject.id],
       );
     } else if (room.type !== subject.requiredRoomType) {
-      violations.push(
+      record(
+        "room-type-mismatch",
         `"${subject.name}" was placed in a ${room.type} room but requires ${subject.requiredRoomType}`,
+        [subject.id],
       );
     }
 
     if (placement.endMinutes - placement.startMinutes !== subject.durationMinutes) {
-      violations.push(
+      record(
+        "duration-mismatch",
         `"${subject.name}" session spans ${placement.endMinutes - placement.startMinutes} minutes, expected ${subject.durationMinutes}`,
+        [subject.id],
       );
     }
 
     if (!firstSlot || !lastSlot) {
-      violations.push("time grid is empty");
+      record("outside-working-hours", "time grid is empty", [subject.id]);
     } else if (
       placement.startMinutes < firstSlot.startMinutes ||
       placement.endMinutes > lastSlot.endMinutes
     ) {
-      violations.push(`"${subject.name}" session falls outside working hours`);
+      record(
+        "outside-working-hours",
+        `"${subject.name}" session falls outside working hours`,
+        [subject.id],
+      );
     }
 
     if (!validDayIndexes.has(placement.dayIndex)) {
-      violations.push(`"${subject.name}" session uses invalid day ${placement.dayIndex}`);
+      record(
+        "invalid-day",
+        `"${subject.name}" session uses invalid day ${placement.dayIndex}`,
+        [subject.id],
+      );
     }
 
     if (slotDuration > 0) {
@@ -154,82 +269,107 @@ export function validateSolution(
         subject.durationMinutes / slotDuration;
       for (let step = 0; step < meetingSlotCount; step++) {
         if (blocked.get(placement.dayIndex)?.has(startSlot + step)) {
-          violations.push(
+          record(
+            "teacher-unavailable",
             `"${subject.name}" is scheduled during teacher-unavailable time`,
+            [subject.id],
           );
           break;
         }
       }
     }
 
-    const teacherOverlap = dayIntervalsFor(
-      teacherDays,
-      placement.teacherId,
-      placement.dayIndex,
-    ).some((interval) =>
-      intervalsOverlap(
-        interval.startMinutes,
-        interval.endMinutes,
-        placement.startMinutes,
-        placement.endMinutes,
-      ),
+    const teacherClash = overlapping(
+      dayIntervalsFor(teacherDays, placement.teacherId, placement.dayIndex),
+      placement.startMinutes,
+      placement.endMinutes,
     );
-    if (teacherOverlap) {
-      violations.push(
+    if (teacherClash) {
+      record(
+        "teacher-double-booked",
         `teacher "${placement.teacherId}" is double-booked on day ${placement.dayIndex}`,
+        [placement.subjectId, teacherClash.subjectId],
       );
     }
 
-    const roomOverlap = dayIntervalsFor(
-      roomDays,
-      placement.roomId,
-      placement.dayIndex,
-    ).some((interval) =>
-      intervalsOverlap(
-        interval.startMinutes,
-        interval.endMinutes,
-        placement.startMinutes,
-        placement.endMinutes,
-      ),
+    const roomClash = overlapping(
+      dayIntervalsFor(roomDays, placement.roomId, placement.dayIndex),
+      placement.startMinutes,
+      placement.endMinutes,
     );
-    if (roomOverlap) {
-      violations.push(
+    if (roomClash) {
+      record(
+        "room-double-booked",
         `room "${placement.roomId}" is double-booked on day ${placement.dayIndex}`,
+        [placement.subjectId, roomClash.subjectId],
       );
     }
 
     const courseYear = courseYearKey(subject);
-    const courseYearOverlap = dayIntervalsFor(
-      courseYearDays,
-      courseYear,
-      placement.dayIndex,
-    ).some((interval) =>
-      intervalsOverlap(
-        interval.startMinutes,
-        interval.endMinutes,
-        placement.startMinutes,
-        placement.endMinutes,
-      ),
+    const courseYearClash = overlapping(
+      dayIntervalsFor(courseYearDays, courseYear, placement.dayIndex),
+      placement.startMinutes,
+      placement.endMinutes,
     );
-    if (courseYearOverlap) {
-      violations.push(
+    if (courseYearClash) {
+      record(
+        "course-year-overlap",
         `"${subject.name}" overlaps another class of the same course and year (${subject.courseId}, year ${subject.year}) on day ${placement.dayIndex}`,
+        [placement.subjectId, courseYearClash.subjectId],
       );
     }
 
     dayIntervalsFor(teacherDays, placement.teacherId, placement.dayIndex).push({
       startMinutes: placement.startMinutes,
       endMinutes: placement.endMinutes,
+      subjectId: subject.id,
     });
     dayIntervalsFor(roomDays, placement.roomId, placement.dayIndex).push({
       startMinutes: placement.startMinutes,
       endMinutes: placement.endMinutes,
+      subjectId: subject.id,
     });
     dayIntervalsFor(courseYearDays, courseYear, placement.dayIndex).push({
       startMinutes: placement.startMinutes,
       endMinutes: placement.endMinutes,
+      subjectId: subject.id,
     });
   }
 
-  return { valid: violations.length === 0, violations };
+  return violations;
+}
+
+export function validateSolution(
+  input: SchedulingInput,
+  solution: readonly PlacedSession[],
+): ScheduleValidationResult {
+  const violations = collectHardViolations(input, solution);
+  return {
+    valid: violations.length === 0,
+    violations: violations.map((violation) => violation.message),
+  };
+}
+
+/**
+ * `P_H(X)`: how many hard rules the schedule breaks, counted per rule.
+ *
+ * The same pass `validateSolution` uses, exposed as a number because the
+ * blank-slate GA needs a *magnitude* to weigh against the soft score, not a
+ * pass/fail — it is allowed to pass through infeasible candidates and has to
+ * prefer the least-broken one.
+ */
+export function countHardViolations(
+  input: SchedulingInput,
+  solution: readonly PlacedSession[],
+): HardViolationCounts {
+  const violations = collectHardViolations(input, solution);
+  const byKind = Object.fromEntries(
+    VIOLATION_KINDS.map((kind) => [kind, 0]),
+  ) as Record<ViolationKind, number>;
+
+  for (const violation of violations) {
+    byKind[violation.kind] += 1;
+  }
+
+  return { total: violations.length, byKind };
 }

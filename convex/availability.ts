@@ -1,4 +1,5 @@
 import { mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
 
 import { roleOf } from "./roles";
@@ -63,19 +64,37 @@ export const setMine = mutation({
       .withIndex("by_teacherId", (q) => q.eq("teacherId", teacherId))
       .unique();
 
-    if (doc) {
-      await ctx.db.patch(doc._id, {
-        blockedSlots,
-        updatedAt: now,
-      });
-      return doc._id;
+    const availabilityId = doc
+      ? await (async () => {
+          await ctx.db.patch(doc._id, { blockedSlots, updatedAt: now });
+          return doc._id;
+        })()
+      : await ctx.db.insert("availability", {
+          teacherId,
+          blockedSlots,
+          createdAt: now,
+          updatedAt: now,
+        });
+
+    // Saving availability is a schedule modification, and a modification is the
+    // trigger the CSP repair reacts to (§7). The system repairs the affected
+    // classes by itself — there is nothing for the teacher to ask for, and
+    // nothing is stored unless the repair succeeds.
+    //
+    // A repair that cannot succeed is reported, not thrown: the availability
+    // change itself is legitimate and is already saved, and a teacher must not
+    // lose it because their week no longer fits. The classes they already had
+    // stay exactly where they were.
+    const repair = await ctx.runMutation(
+      internal.schedule.repairAfterAvailabilityChange,
+      { teacherId },
+    );
+    if (repair.outcome === "failed") {
+      console.warn(
+        `Availability saved for ${teacherId} but the schedule could not be repaired: ${repair.reason ?? "unknown reason"}`,
+      );
     }
 
-    return ctx.db.insert("availability", {
-      teacherId,
-      blockedSlots,
-      createdAt: now,
-      updatedAt: now,
-    });
+    return availabilityId;
   },
 });

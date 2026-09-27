@@ -34,6 +34,15 @@ and migration story. Verified with `tsc`, `lint`, `build`, the engine smoke test
 (111 assertions) and `scripts/schedule-grid-smoke-test.ts` (76 assertions).
 Browser verification is still outstanding — see Next Up.
 
+The **engine** has since been rewired to the thesis's algorithm ordering, and the
+app now runs it. `gaGenerate.ts` builds the whole week from a blank slate, and
+`repair.ts` fixes one broken class automatically on hard constraints only.
+`convex/schedule.ts`'s `generate` calls `gaGenerate` directly and no longer runs a
+CSP first; the old `runCSP` and `runGA` entry points have been deleted, leaving
+`csp.ts` (domain construction) and `ga.ts` (penalty measurement) as the shared
+layers both searches read. Saving availability on `/teacher/availability` now
+triggers the repair automatically — see Completed ("thesis workflow, live").
+
 ## Current Goal
 
 Shipped (see Completed). Remaining follow-up: eyeball it in the browser.
@@ -68,6 +77,148 @@ and the 12-row grid at 7:30 AM and 6:30 PM with an empty first/last slot.
 
 
 ## Completed
+
+- **Thesis architecture alignment — a GA that builds the week, a CSP that repairs
+  it** — two new standalone modules plus a demo script. This is proposal-defense
+  scope: it makes the *algorithm structure* match what the thesis claims, and it
+  deliberately changes nothing the app does today.
+  - **`convex/scheduling/gaGenerate.ts` — the GA builds the whole schedule from
+    a blank slate.** Fitness is the thesis's `F(X) = S(X) − 1001 · P_H(X)`,
+    **maximized**.
+    - **Blank slate, not a polished answer.** The old `runGA` took a seed schedule
+      and could only improve it; `gaGenerate` takes **no seed at all**. Its
+      chromosome is one index per subject into that subject's own (pattern,
+      time) choices, so a chromosome of N genes is always a complete N-class
+      week and the only way to be invalid is to overlap something. The initial
+      population is a uniform random draw per gene — the demo counts 146 of 200
+      such unsearched draws as already broken, which is what a blank slate
+      actually looks like at eight classes.
+    - **`S(X)`, 0–100.** Each soft constraint the Dean left on contributes a
+      satisfaction of `reference / (reference + penalty)` — 1 with no penalty,
+      0.5 once the penalty reaches that constraint's reference magnitude
+      (2 overload points, 4 unused days, 4 idle hours) — and `S(X)` is their
+      weight-weighted average scaled to 100. A weight of 0 removes the term
+      entirely, as everywhere else. All-zero weights means `S(X) = 0`, so the
+      search degenerates to "find the least broken week", which is correct
+      rather than a special case. Penalties come from the existing
+      `measurePenalties`; weights are clamped by the existing
+      `normalizeWeights`.
+    - **`P_H(X)`, a count.** New `countHardViolations` in `validate.ts`, backed
+      by a new `collectHardViolations` that every reader of hard-constraint
+      validity now shares (see the decision below). It counts teacher
+      double-bookings, room double-bookings, room-type mismatches, blocked
+      availability, course+year overlaps, and the structural pair rules.
+    - **Infeasible weeks are allowed, and reported.** Nothing forbids a
+      candidate from breaking a rule — that is what the penalty is for. On a
+      deliberately impossible week the demo gets `S(X) = 100, P_H(X) = 2,
+      F(X) = −1902`: a *perfectly packed* week that double-books a teacher, and
+      the arithmetic refuses to let the niceness buy the conflict away. The
+      result is returned with `valid: false` and the violations listed rather
+      than thrown.
+  - **`convex/scheduling/repair.ts` — the CSP repairs one broken class,
+    automatically.** Input is the post-change schedule plus a **trigger** (the
+    event, not a request): `class-edited` (a class was moved/changed) or
+    `teacher-availability-changed` (a teacher's new blocks landed under a placed
+    session). The system calls it because something happened; there is no
+    "Repair" button in this design, and nothing asks the user first.
+    - **Local by construction.** Only the classes the engine can see *broken*
+      are lifted: the trigger's subject plus everything reachable through the
+      violation graph from it (a double-booking names both sides, so the class
+      that has to move joins and the walk stops there). Everything else comes
+      back byte-for-byte — the demo shows 6 of 8 classes untouched after a class
+      edit and 5 of 8 after an availability change. A change that breaks nothing
+      is a zero-class repair, not a reshuffle.
+    - **Hard constraints only, and it is structural, not a promise.**
+      `RepairOptions` is `{ input, schedule, trigger }` — there is nowhere to put
+      a weight, so `repair` cannot read a soft constraint even by accident. It
+      takes the *first* valid slot it finds for the broken class; it does not
+      rank slots, does not score them, and does not re-optimize the week
+      afterwards (that would move the very classes it promises to leave alone).
+    - **Validity is the same validity the GA counts.** A candidate is accepted
+      when `collectHardViolations` reports nothing about that subject, so "hard
+      constraint" means exactly one thing across both halves.
+    - Returns `{ success, schedule, repairedSessions, affectedCount, changes,
+      remainingHardViolations, reason? }`. On failure the schedule comes back
+      exactly as it went in, so a caller can roll the change back rather than
+      store a broken week.
+  - **`scripts/thesis-architecture-demo.ts` — 29 assertions, 0 failures,
+    ~4s.** The pressure-test fixture (5 subjects) plus three demo-only classes
+    for the same teacher, because at five classes a random draw is usually
+    already valid and "blank slate" is invisible. Step 1 runs the GA twice with
+    the *same seed* and different weights — a different week and a different
+    score, each run at least as good as the other on what it was asked to
+    optimize. Step 2 breaks a class on purpose, repairs it, and proves the other
+    classes are identical and that the repair is unchanged under three different
+    `ScheduleSettings` values.
+  - **Soft constraints are GA-only, and CSP-repair is hard-constraints-only and
+    automatically triggered by a change.** That is the thesis's split, and it is
+    now the code's split: `gaGenerate.ts` is the only module in the engine that
+    reads a soft-constraint weight, and `repair` cannot receive one.
+  - **Deliberately still out of scope:** the thesis's §9 benchmark, timing
+    instrumentation, statistics, or Excel/CSV/JSON export; room capacity and
+    faculty preferred-time-window constraints; and the `class-edited` trigger,
+    which needs a manual schedule-editing UI that does not exist yet.
+
+- **Thesis workflow, live — the GA generates, the CSP repairs, and the old
+  pipeline is gone.** The two modules above were the thesis's *structure*; this is
+  that structure actually running, with the superseded pipeline deleted rather
+  than left dormant.
+  - **`generate` is now GA-only.** `convex/schedule.ts`'s `generate` action calls
+    `gaGenerate(input, { weights })` and nothing else. The old `runCSP` → `runGA`
+    polish chain is removed: `runCSP`, `greedyDecode`, `diagnoseFailedPlacement`
+    and the private `OccupancyTracker` are gone from `csp.ts`, and `runGA` and
+    `hasActiveConstraint` are gone from `ga.ts`. What those files keep is exactly
+    what both live searches read — `csp.ts` builds the per-subject (pattern, time)
+    domains and validates the input, `ga.ts` measures the soft penalties and
+    normalizes the weights. The now-dead `CspResult`, `GaOptions` and `GaResult`
+    types were dropped from `types.ts` too.
+  - **A week the GA cannot make conflict-free is a failure, not a save.** The
+    action always returns an `optimization` result, but only writes rows when the
+    best week is valid. When it is not, the result carries `conflicts` — the
+    violation messages from the shared collector — and the previous database
+    schedule is left exactly as it was. A Dean is shown the conflicts instead of a
+    timetable that silently contains them. `GenerateScheduleResult` in
+    `types/schedule.ts` carries `optimization: OptimizationResult` (no longer
+    nullable) and the `conflicts` list; `useSchedule` keeps both, clearing them
+    when a new generation starts.
+  - **The score is a score, not a penalty.** The GA's `softScore` (0–100) is what
+    the UI shows, and `SchedulePage` labels it "Preference score out of 100 —
+    higher is better". The old "lower is better" reading is gone from the label,
+    though `OptimizationResult.fitness` keeps its field name and still needs its
+    doc comment reworded to the new meaning.
+  - **Availability changes now trigger the repair, for real.** `setMine` in
+    `convex/availability.ts` calls the new internal mutation
+    `schedule.repairAfterAvailabilityChange`, which rebuilds the scheduling input
+    from the database, runs `repair` with
+    `trigger: { kind: "teacher-availability-changed", teacherId }`, and — only on
+    success — deletes the rows for the classes that moved and re-inserts them
+    through the same `toSessionRow` helper `generate` uses, so a repaired row and
+    a generated row cannot differ. No schedule rows means `no-schedule`, which is
+    not a repair; a failed repair leaves the stored schedule untouched and logs a
+    warning, because a teacher must not lose availability they legitimately saved
+    just because their week stopped fitting.
+  - **The engine smoke test was retargeted, not deleted.** 112 assertions, 0
+    failures. `runCSP` call sites became `runGenerator` (a blank-slate `gaGenerate`
+    with no preferences); the `runGA` optimizer sections became assertions about
+    the GA that can actually be made now — that with the spread weights on, three
+    subjects for one teacher reach the *known* optimum (`daySpread` 0, no
+    overloaded day) rather than merely "better than the seed it was given", which
+    is no longer a meaningful comparison when there is no seed. Order-dependent
+    claims ("MW-first by default", "lands on slot 9") became invariants
+    ("both sessions of a class agree on time and room", "sits in a free window"),
+    because the day-pair is a gene the GA explores. A week that is only *jointly*
+    impossible is no longer asserted to come back as a per-subject diagnosis — a
+    genetic search cannot prove one — but as a best effort that must never claim
+    success, and the two diagnostics that do name a cause
+    (`explainInfeasibility`, `explainPatternFailure`) are now driven directly.
+    Added a repair section covering the new live path: a stranded class is moved,
+    the same teacher's other classes are not, another teacher's class is not in the
+    repair set at all, and a change that breaks nothing returns the week
+    unchanged.
+  - **`scripts/thesis-architecture-demo.ts` and `scripts/schedule-grid-smoke-test.ts`**
+    are unchanged: 29 and 76 assertions, 0 failures. `tsc`, `lint` and `build` are
+    clean.
+
 
 - **Class cards are colored by subject** — a ten-slot muted palette, chosen in
   the Subject form, drawn on both grids with a legend.
@@ -1236,7 +1387,25 @@ and the 12-row grid at 7:30 AM and 6:30 PM with an empty first/last slot.
 
 ## Next Up
 
-1. Sanity-check spec 12 in the browser (Dean login for `/dean/schedule`,
+1. Read `npx tsx scripts/thesis-architecture-demo.ts` end to end before the
+   proposal defense — it is the artifact, and the two numbers worth being able
+   to explain cold are `F(X) = −1902` on the impossible week (why `1001` is
+   there) and `affectedCount = 2 of 8` on the repair (why the other six classes
+   cannot move). Nothing else in this list is blocked on it.
+2. ~~**After proposal approval only:** decide whether the app switches to the
+   thesis pipeline (`gaGenerate` in, `runCSP`/`runGA` out).~~ **Done** — see
+   Completed ("thesis workflow, live"). What that pass leaves behind:
+  - `OptimizationResult.fitness` still carries its old field name while holding a
+    0–100 score. The doc comment in `types/scheduleSettings.ts` now states the
+    new meaning (and says the name is a deliberate leftover); renaming the field
+    across the client types, the action and the UI is still open.
+   - The `class-edited` repair trigger is still unreachable, because there is no
+     manual schedule editing. `teacher-availability-changed` is the live one.
+3. **After proposal approval only:** the benchmark / statistics / export pass that
+   turns the demo into results (§9), plus room capacity and faculty
+   preferred-time-window constraints (§5). The GA parameters are already at the
+   thesis's table; what is missing is measurement, not tuning.
+4. Sanity-check spec 12 in the browser (Dean login for `/dean/schedule`,
    teacher login for `/teacher/schedule`): confirm the two MW / TTh columns
    line up with their header cells, the 12 time rows read 7:30 AM to 6:30 PM,
    a 3-hour class spans three rows in both views, the loading skeleton has
@@ -1246,48 +1415,63 @@ and the 12-row grid at 7:30 AM and 6:30 PM with an empty first/last slot.
    time in different rooms, regenerate, and look at it. Then check the
    inverse: a lone class in a column that another time had to split should
    still be full width.
-2. Sanity-check spec 11 in the browser with a real teacher login: confirm
+5. Sanity-check spec 11 in the browser with a real teacher login: confirm
    `/teacher/schedule` shows only that teacher's classes, one card per class
    (not two for a Mon/Wed class), the summary line's class count matching
    the cards, and the loading skeleton. The empty state and cross-teacher
    isolation can't be seen with the current dev data (one teacher owns all
    8 rows) — add a second teacher's subject, regenerate, and log in as each
    teacher.
-3. Sanity-check spec 10 in the browser with a real Dean login: open
+6. Sanity-check spec 10 in the browser with a real Dean login: open
    Optimization, toggle each constraint, drag a weight, save, re-open (the
    values must come back from the `scheduleSettings` row), then generate once
    with a weight on and once with everything off. The dialog's
    loading/error/saving states, the "Save settings" disabled-while-unchanged
    rule, Cancel-discards behavior, the score `Badge` + "lower is better" line,
    and the toast wording have not been eyeballed.
-4. Sanity-check spec 09 in the browser with a real Dean login: force a
+7. Sanity-check spec 09 in the browser with a real Dean login: force a
    generate failure (block a teacher's whole MW pair, or point two subjects at
    one room so it is taken at every shared start) and confirm the
    `ConflictAlert` names the room + the class holding it + the overlapping
    time, or the teacher + the blocked window, with one alert per failed
    subject and the accordion when several fail. The alert's border/destructive
    styling has not been eyeballed.
-5. Sanity-check spec 08 in the browser with a real Dean login: switch
+8. Sanity-check spec 08 in the browser with a real Dean login: switch
    through every Course + Year group in the `/dean/schedule` selector,
    confirm each view shows only that group's sessions, and confirm a
    group with subjects but no placed classes renders the shared
    `EmptyState`. The selector's grouped `Select` (per-course group
    labels, per-year class counts) has not been eyeballed — group labels
    and mobile layout especially.
-6. Sanity-check spec 07 in the browser with a real Dean login: add/edit/
+9. Sanity-check spec 07 in the browser with a real Dean login: add/edit/
    delete a Course at `/dean/courses`, create a Subject with the new
    Course/Year selects (and confirm submit is blocked without them), and
    read the Course/Year columns in the subjects table. Lint/build/smoke are
    green and the dev data is migrated, but the UI has not been eyeballed.
-7. Dean schedule view polish / student-facing schedule (out of scope until
-   confirmed in specs)
-8. Sanity-check the 2-column availability grid in the browser (real teacher
+10. Dean schedule view polish / student-facing schedule (out of scope until
+    confirmed in specs)
+11. Sanity-check the 2-column availability grid in the browser (real teacher
    login): red blocked cells, save/reset round-trip, tooltip labels — the
    pattern keys and grid are covered by lint/build/smoke, but the visual/UX
    hasn't been eyeballed
 
 ## Open Questions
 
+- ~~**The app's pipeline and the thesis's pipeline are two different things**~~
+  (raised by the thesis-alignment pass, **resolved** by the thesis-workflow pass —
+  the app is now on the thesis's ordering: GA builds globally, CSP repairs
+  locally, and the `runCSP`/`runGA` pipeline is deleted). The two questions it
+  left open, both now partly answered:
+  - *What does the app do on a week the GA cannot schedule?* It saves nothing and
+    reports the conflicts, with the previous schedule left in place. The
+    open-question concern that "a `P_H > 0` result is a worse failure than 'no
+    arrangement exists'" turned out not to apply: the GA is given no fallback to
+    compare against, so the honest statement is *how close it got and what is
+    still broken*, which is what the violation list is.
+  - *What modification event triggers `repair`?*
+    `teacher-availability-changed`, wired to the availability save.
+    `class-edited` still has no event, because manual schedule editing is Out of
+    Scope in `project-overview.md`.
 - **What the Dean's weights actually mean, now that a score exists** (asked by
   spec 10, answered — the honest limits are recorded here): the number is a
   **penalty total in "constraint points"**, not a percentage, quality grade, or
@@ -1540,6 +1724,55 @@ and the 12-row grid at 7:30 AM and 6:30 PM with an empty first/last slot.
 
 ## Architecture Decisions
 
+- **"Is this schedule valid?" has exactly one implementation with three readers**
+  (thesis alignment). `collectHardViolations` in `validate.ts` returns every
+  breach as `{ kind, message, subjectIds }`, and the three consumers each take
+  the view they need: `validateSolution` (unchanged signature and messages) for
+  the boolean the app shows, `countHardViolations` for the `P_H(X)` the GA
+  minimizes, and the `subjectIds` for the repair's conflict walk. The reason for
+  one collector is that "hard constraint" is the load-bearing concept in both
+  halves of the thesis — a GA that counts one thing and a repair that checks
+  another would make the defense claim unprovable, and three separate checks
+  would be three chances to disagree about what a course-year overlap is.
+  `subjectIds` on a double-booking naming *both* sides is what lets a repair
+  find the class it must move without re-deriving what overlaps what.
+- **The whole "valid first, pleasant second" rule is one number, and `1001` is
+  the reason it can be** (thesis alignment). Because `S(X)` is capped at 100,
+  a multiplier of 1001 on `P_H(X)` makes one violation cost more than the entire
+  soft range can earn — so maximizing a single weighted sum *is* a lexicographic
+  objective, with no penalty-tuning ladder and no second phase. The
+  demonstration that this is load-bearing rather than decorative: on an
+  impossible week the GA returns a *perfectly packed* timetable scoring
+  `S(X) = 100` with two teacher double-bookings, and `F(X) = −1902`. A GA that
+  simply discarded invalid candidates (what `runGA` does) could not express that
+  preference at all.
+- **The blank-slate GA is a second module, not a mode of `runGA`** (thesis
+  alignment). `runGA` is an *optimizer* and its defining property is that it can
+  never lose to its input (its seed is the incumbent). The thesis's GA is a
+  *constructor*, and the property it needs is the opposite: it must be free to
+  propose an invalid week, because validity is something the fitness function
+  buys rather than something the representation guarantees. Folding the two
+  together would have meant either weakening the incumbent guarantee that
+  `generate` relies on today, or making the blank-slate search refuse to propose
+  the candidates it needs. They stay separate files with separate names
+  (`runGA` vs `gaGenerate`) so the two claims never blur.
+- **A repair is triggered by an event, never requested by a user** (thesis
+  alignment). `repair` takes a `RepairTrigger` — the thing that happened — and
+  the app would call it from the mutation that made the change, not from a
+  button. This is a design constraint, not a missing feature: a "Repair" button
+  puts the user in the loop for something with exactly one sensible answer, and
+  the thesis's point is that the repair is a *consequence* of the change, not a
+  decision. It is also why the trigger for an availability change carries only a
+  `teacherId` and not a list of classes: which classes the new block actually
+  broke is the engine's business, and making the caller work that out is how a
+  repair quietly grows into a full regeneration.
+- **The repair's locality is derived, never requested** (thesis alignment). The
+  affected set is the trigger's subject plus everything reachable through the
+  violation graph, filtered to classes the engine can actually see broken. That
+  filter is the difference between a repair and a reshuffle: a teacher who
+  blocks one afternoon has many classes that the new block never touched, and
+  the first version of this code (seeding with all of that teacher's subjects
+  unconditionally) moved all eight of them. The demo caught it.
 - **The grid's shape is data, not a rendering concern (spec 12)**: every
   block arrives pre-positioned (`startSlot`, `span`, `lane`, `lanes`,
   `columnIndex`) from `buildScheduleGrid`, and the component only maps that to
@@ -2080,3 +2313,31 @@ and the 12-row grid at 7:30 AM and 6:30 PM with an empty first/last slot.
     teacher double-booked. Worth remembering that a failing test is a claim
     about the spec of the thing, and the first move is to work out which side
     is wrong.
+- Unit: thesis architecture alignment (`gaGenerate` + `repair` + demo script) —
+  see Completed. `npx tsx scripts/thesis-architecture-demo.ts`, 29 assertions,
+  ~4s, no test framework (same plain-tsx style as the other two scripts; there
+  is still no `npm test`). Two things the demo caught that review would not
+  have:
+  - **The repair was not local at all.** The availability trigger seeded the
+    affected set with *every* class the teacher teaches, and a class only ever
+    got added, never dropped — so blocking one afternoon moved all 8 of 8
+    classes. The fix is a filter, not a limit: a seed joins the affected set
+    only if `collectHardViolations` can actually see it broken, which drops the
+    unaffected ones to 0 and also makes a benign edit a zero-class repair. The
+    lesson generalizes: **a closure that only grows needs a membership test on
+    entry**, and "the trigger is about this teacher" is not the same claim as
+    "these classes are broken".
+  - **The five-subject pressure fixture is too loose to show a blank slate.**
+    189 of 200 unsearched random assignments were already conflict-free, so the
+    run proved nothing about the GA starting from nothing. The demo now adds
+    three classes of its own for the same teacher (12 teaching hours over 4
+    days); that took it to 54/200 valid and made the point land. Same lesson as
+    the grid's dev-week mirror, one level up: **if every random input already
+    satisfies the property you are trying to demonstrate, the demonstration is
+    not measuring anything** — size the fixture until the naive answer is
+    usually wrong.
+- Tooling: `npx convex codegen` (run implicitly by `tsc`/`next build`) rewrites
+  `convex/_generated/api.d.ts` to register **any** new file under `convex/` as
+  an API module, whether or not it exports a Convex function. So
+  `gaGenerate.ts` / `repair.ts` showing up in that diff is expected and is not
+  a sign they were wired into the backend.

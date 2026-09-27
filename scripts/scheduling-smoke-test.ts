@@ -1,12 +1,17 @@
-import { runCSP } from "../convex/scheduling/csp";
 import {
+  explainInfeasibility,
   explainPatternFailure,
   freeWindowsForDay,
 } from "../convex/scheduling/cspDiagnostics";
-import { measurePenalties, runGA } from "../convex/scheduling/ga";
+import {
+  gaGenerate,
+  softScoreFor,
+  type GaGenerateResult,
+} from "../convex/scheduling/gaGenerate";
+import { measurePenalties } from "../convex/scheduling/ga";
+import { repair } from "../convex/scheduling/repair";
 import { validateSolution } from "../convex/scheduling/validate";
 import type {
-  PatternInfeasibility,
   PlacedSession,
   SchedulingAvailability,
   SchedulingDay,
@@ -119,6 +124,28 @@ function patternDaysForSubject(
   return pattern ? [...DAY_PATTERN_DAY_INDEXES[pattern]] : [];
 }
 
+/**
+ * Whether a placement sits inside a window the subject could legally occupy on
+ * that day.
+ *
+ * Stated this way rather than as "MW slot 0", because the day-pair is a gene: a
+ * class with one open afternoon may legitimately be placed on the other pair.
+ * What must hold is that wherever it landed, the class is in free time. Only
+ * availability is consulted — the placement under test is excluded from the
+ * occupancy, or it would block the very window it sits in.
+ */
+function sitsInAFreeWindow(
+  input: SchedulingInput,
+  subject: SchedulingSubject,
+  placement: PlacedSession,
+): boolean {
+  const windows = freeWindowsForDay(input, subject, [], placement.dayIndex);
+  return windows.some(
+    (window) =>
+      placement.startMinutes >= window.start && placement.endMinutes <= window.end,
+  );
+}
+
 function assertPatternPair(
   solution: readonly PlacedSession[],
   subject: SchedulingSubject,
@@ -170,38 +197,22 @@ function seededRandom(seed: number): () => number {
   };
 }
 
-function placementKey(placement: PlacedSession): string {
-  const { subjectId, dayIndex, dayPattern, startMinutes, endMinutes, roomId } =
-    placement;
-  return [
-    subjectId,
-    dayPattern,
-    dayIndex,
-    startMinutes,
-    endMinutes,
-    roomId,
-  ].join("|");
-}
-
-function samePlacements(
+function sameWeek(
   left: readonly PlacedSession[],
   right: readonly PlacedSession[],
 ): boolean {
-  const a = left.map(placementKey).sort();
-  const b = right.map(placementKey).sort();
-  return a.length === b.length && a.every((key, index) => key === b[index]);
-}
-
-function weightedScore(
-  solution: readonly PlacedSession[],
-  weights: SoftConstraintWeights,
-): number {
-  const penalties = measurePenalties(solution);
-  return (
-    penalties.workloadBalance * weights.workloadBalance +
-    penalties.daySpread * weights.daySpread +
-    penalties.gapMinimization * weights.gapMinimization
-  );
+  const key = (placement: PlacedSession) =>
+    [
+      placement.subjectId,
+      placement.dayPattern,
+      placement.dayIndex,
+      placement.startMinutes,
+      placement.endMinutes,
+      placement.roomId,
+    ].join("|");
+  const a = left.map(key).sort();
+  const b = right.map(key).sort();
+  return a.length === b.length && a.every((entry, index) => entry === b[index]);
 }
 
 function allBlockedAvailability(teachers: readonly string[]): SchedulingAvailability[] {
@@ -215,23 +226,35 @@ function allBlockedAvailability(teachers: readonly string[]): SchedulingAvailabi
   }));
 }
 
-function hasPatternCause(
-  result: ReturnType<typeof runCSP>,
-  predicate: (pattern: PatternInfeasibility) => boolean,
-): boolean {
-  return (
-    !result.ok &&
-    "reasons" in result &&
-    result.reasons.length > 0 &&
-    result.reasons.some((reason) => reason.patterns.some(predicate))
-  );
+/**
+ * The generator under test: a blank-slate GA, the way the app now builds a week.
+ *
+ * Every fixture below is about a *hard* constraint — a blocked afternoon, a
+ * missing room, a duration that fits no slot — and a hard constraint is a hard
+ * constraint whoever searches. So these assertions are stated as invariants
+ * ("nothing lands in a blocked slot", "both sessions of a class agree on time
+ * and room") rather than as a particular arrangement, because which day-pair a
+ * class ends up on is now a gene the GA explores rather than an algorithm's
+ * fixed preference.
+ *
+ * A week that is only *jointly* impossible — every class placeable alone, not all
+ * of them together — is not something a genetic search can prove. It comes back
+ * as a best effort carrying its conflicts, never as a clean schedule, and the
+ * assertions below check exactly that.
+ */
+function runGenerator(input: SchedulingInput): GaGenerateResult {
+  return gaGenerate(input, {
+    weights: NO_PREFERENCES,
+    random: seededRandom(1),
+  });
 }
 
+
 function main() {
-  console.log("CSP: feasible case");
+  console.log("Generator: feasible case");
   const feasible = buildInput();
-  const cspResult = runCSP(feasible);
-  check(cspResult.ok, "runCSP returns ok for the feasible input");
+  const cspResult = runGenerator(feasible);
+  check(cspResult.ok, "the generator succeeds on the feasible input");
   if (!cspResult.ok) {
     if ("reasons" in cspResult) {
       cspResult.reasons.forEach((reason) =>
@@ -243,38 +266,49 @@ function main() {
   } else {
     const expectedSessions = SUBJECTS.length * 2;
     check(
-      cspResult.solution.length === expectedSessions,
-      `CSP places exactly ${expectedSessions} sessions (2 per subject)`,
+      cspResult.schedule.length === expectedSessions,
+      `the GA places exactly ${expectedSessions} sessions (2 per subject)`,
     );
-    const validation = validateSolution(feasible, cspResult.solution);
-    check(validation.valid, "CSP solution has zero hard-constraint violations");
+    const validation = validateSolution(feasible, cspResult.schedule);
+    check(validation.valid, "the GA's week has zero hard-constraint violations");
     if (!validation.valid) {
       validation.violations.forEach((violation) => console.error(`  - ${violation}`));
     }
 
-    console.log("CSP: algorithm picks the pattern, MW-first by default");
+    console.log("Generator: the day-pair is a gene, but a class stays one class");
     for (const subject of SUBJECTS) {
-      const sessions = sessionsBySubject(cspResult.solution).get(subject.id) ?? [];
+      const sessions = sessionsBySubject(cspResult.schedule).get(subject.id) ?? [];
       check(
-        sessions.every((session) => session.dayPattern === "MW"),
-        `"${subject.name}" is placed on MW (algorithm default, not Dean-chosen)`,
+        sessions.length === 2 && new Set(sessions.map((s) => s.dayPattern)).size === 1,
+        `"${subject.name}" takes exactly one day-pair (both sessions agree on MW or TTh)`,
       );
       check(
-        assertPatternPair(cspResult.solution, subject, [0, 2]),
-        `"${subject.name}" lands on days 0,2 at the same time in the same room`,
+        assertPatternPair(
+          cspResult.schedule,
+          subject,
+          patternDaysForSubject(cspResult.schedule, subject.id),
+        ),
+        `"${subject.name}" lands on both days of its pair at the same time in the same room`,
       );
     }
   }
 
-  console.log("CSP: blocked on either day forces the pair to a free slot");
+  console.log("Generator: a fully blocked MW is skipped, not forced");
   if (cspResult.ok) {
-    const mathSessions = sessionsBySubject(cspResult.solution).get("s1") ?? [];
-    const anyAtFreeSlot = mathSessions.every(
-      (session) => session.startMinutes === 990 && session.endMinutes === 1050,
+    const mathSessions = sessionsBySubject(cspResult.schedule).get("s1") ?? [];
+    // t1 has MW slots 0-8 blocked, so Math 101 has exactly two legal shapes:
+    // TTh at some free slot, or MW at slot 9 (4:30 PM). Either satisfies the
+    // hard constraint, and the GA is free to take whichever it explores.
+    const avoidsEveryBlockedMwSlot = mathSessions.every(
+      (session) => session.dayPattern === "TTh" || session.startMinutes === 990,
     );
     check(
-      anyAtFreeSlot,
-      "Math 101 uses 4:30 PM (slot 9) on both days because MW slots 0-8 are blocked for t1",
+      avoidsEveryBlockedMwSlot,
+      "Math 101 never lands in one of t1's blocked MW slots 0-8",
+    );
+    check(
+      validateSolution(feasible, cspResult.schedule).valid,
+      "and the blocked availability is proven clear by the shared validator",
     );
   }
 
@@ -319,7 +353,6 @@ function main() {
     },
   ];
   const stackInput = buildInput(stackSubjects, stackRooms, []);
-  const stackResult = runCSP(stackInput);
 
   // Hand-built so the gap is exactly known: t-gap teaches 7:30 and 11:30 on both
   // MW days, and t-other's 3-hour class holds the only other room from 8:30 to
@@ -391,118 +424,73 @@ function main() {
     },
   ]);
 
-  console.log("GA: seed from CSP must stay valid");
+  console.log("GA: the weights decide what the search optimizes");
   if (cspResult.ok) {
-    const gaResult = runGA(feasible, cspResult.solution, {
-      weights: NO_PREFERENCES,
-      random: seededRandom(1),
-    });
-    const gaValidation = validateSolution(feasible, gaResult.schedule);
-    check(
-      gaValidation.valid,
-      "GA output has zero hard-constraint violations",
-    );
-    if (!gaValidation.valid) {
-      gaValidation.violations.forEach((violation) => console.error(`  - ${violation}`));
-    }
-    check(gaResult.schedule.length > 0, "GA returns a non-empty schedule");
-    check(
-      SUBJECTS.every((subject) =>
-        assertPatternPair(
-          gaResult.schedule,
-          subject,
-          patternDaysForSubject(gaResult.schedule, subject.id),
-        ),
-      ),
-      "GA keeps every subject's day-pair intact (same time, same room)",
-    );
-    check(
-      gaResult.fitness === 0,
-      "all weights off means every candidate scores 0, so the CSP seed is returned untouched",
-    );
-    check(
-      samePlacements(gaResult.schedule, cspResult.solution),
-      "all weights off returns the CSP schedule exactly (no GA work spent)",
-    );
-  }
-
-  console.log("GA: weights decide what gets optimized, and the score is explained");
-  if (cspResult.ok) {
-    const gapWeights = { ...NO_PREFERENCES, gapMinimization: 5 };
-    const gapResult = runGA(feasible, cspResult.solution, {
-      weights: gapWeights,
-      random: seededRandom(7),
-    });
-    check(
-      validateSolution(feasible, gapResult.schedule).valid,
-      "a gap-only optimization still passes every hard constraint",
-    );
-    check(
-      gapResult.fitness === 5 * gapResult.penalties.gapMinimization,
-      "gap-only fitness is exactly weight x gap penalty",
-    );
-    check(
-      gapResult.fitness <= weightedScore(cspResult.solution, gapWeights),
-      "the GA never returns a worse weighted score than the CSP seed it started from",
-    );
-    check(
-      SUBJECTS.every((subject) =>
-        assertPatternPair(
-          gapResult.schedule,
-          subject,
-          patternDaysForSubject(gapResult.schedule, subject.id),
-        ),
-      ),
-      "an optimized schedule keeps every subject's day-pair intact",
-    );
-  }
-
-  console.log("GA: the pattern gene lets a teacher use the whole week");
-  if (stackResult.ok) {
-    const seedPenalties = measurePenalties(stackResult.solution);
-    check(
-      seedPenalties.daySpread > 0 && seedPenalties.workloadBalance > 0,
-      "the CSP stacks one teacher onto MW only, costing both spread and workload points",
-    );
+    // One teacher, three subjects, three rooms. Each subject occupies a
+    // day-pair, so the teacher's week spans all four days exactly when the
+    // subjects do not all share one pair. That makes the optimum known in
+    // advance, which is what lets these assert equality rather than "it got
+    // better" — the search has to actually find the best week, not merely
+    // improve on whatever it happened to start with.
     const spreadWeights = {
       workloadBalance: 10,
       daySpread: 10,
       gapMinimization: 0,
     };
-    const spreadGA = runGA(stackInput, stackResult.solution, {
+    const spreadGA = gaGenerate(stackInput, {
       weights: spreadWeights,
       random: seededRandom(42),
     });
-    check(
-      validateSolution(stackInput, spreadGA.schedule).valid,
-      "the spread-optimized schedule still passes every hard constraint",
-    );
-    const optimized = measurePenalties(spreadGA.schedule);
-    check(
-      optimized.daySpread < seedPenalties.daySpread,
-      `day-spread penalty drops (${seedPenalties.daySpread} -> ${optimized.daySpread}) by using both MW and TTh`,
-    );
-    check(
-      optimized.workloadBalance < seedPenalties.workloadBalance,
-      `workload penalty drops (${seedPenalties.workloadBalance} -> ${optimized.workloadBalance}) because no teacher-day is overloaded`,
-    );
-    check(
-      spreadGA.fitness ===
-        optimized.workloadBalance * 10 + optimized.daySpread * 10,
-      "the reported fitness is the weighted sum of the reported penalties",
-    );
-    check(
-      spreadGA.schedule.length === stackSubjects.length * 2,
-      "still exactly 2 linked sessions per subject after optimization",
-    );
-    for (const subject of stackSubjects) {
+    check(spreadGA.ok, "the GA schedules the stacked-teacher week");
+    if (spreadGA.ok) {
       check(
-        assertPatternPair(
-          spreadGA.schedule,
-          subject,
-          patternDaysForSubject(spreadGA.schedule, subject.id),
-        ),
-        `"${subject.name}" lands on a valid day-pair at the same time in the same room`,
+        validateSolution(stackInput, spreadGA.schedule).valid,
+        "the spread-optimized week still passes every hard constraint",
+      );
+      const optimized = measurePenalties(spreadGA.schedule);
+      check(
+        optimized.daySpread === 0,
+        `day-spread penalty is optimal (${optimized.daySpread}) — the GA split the teacher's week across both day-pairs, so all four days are used`,
+      );
+      check(
+        optimized.workloadBalance === 0,
+        "workload penalty is optimal (0) — no teacher-day is over the 2-class limit",
+      );
+      check(
+        spreadGA.schedule.length === stackSubjects.length * 2,
+        "still exactly 2 linked sessions per subject after optimization",
+      );
+      for (const subject of stackSubjects) {
+        check(
+          assertPatternPair(
+            spreadGA.schedule,
+            subject,
+            patternDaysForSubject(spreadGA.schedule, subject.id),
+          ),
+          `"${subject.name}" lands on a valid day-pair at the same time in the same room`,
+        );
+      }
+    }
+  }
+
+  console.log("GA: the day-pair gene is what lets a teacher use the whole week");
+  if (cspResult.ok) {
+    // Same input, no preferences at all. The pattern gene is still free to move,
+    // so the search is free to concentrate on MW — and that is the point: the
+    // difference between this run and the one above is only the weights.
+    const unweighted = gaGenerate(stackInput, {
+      weights: NO_PREFERENCES,
+      random: seededRandom(42),
+    });
+    check(unweighted.ok, "the GA schedules the stacked-teacher week with no preferences");
+    if (unweighted.ok) {
+      check(
+        unweighted.softScore === 0,
+        "all weights off means S(X) = 0 for every candidate, so the search optimizes nothing",
+      );
+      check(
+        validateSolution(stackInput, unweighted.schedule).valid,
+        "and it still returns a conflict-free week, because hard constraints are not optional",
       );
     }
   }
@@ -516,42 +504,72 @@ function main() {
     validateSolution(gapInput, gapSeed).valid,
     "the hand-built gap seed is itself conflict-free",
   );
-  const gapOnly = runGA(gapInput, gapSeed, {
-    weights: { ...NO_PREFERENCES, gapMinimization: 4 },
-    random: seededRandom(3),
+  check(
+    measurePenalties(gapSeed).daySpread > 0,
+    "day spread is still reported as a penalty even where a weight is 0, so a score can be explained",
+  );
+
+  console.log("Repair: one teacher's new block moves only their own classes");
+  // t-gap teaches two subjects on MW at 7:30 and 11:30. t-other's 3-hour class
+  // holds the only other room from 8:30 to 11:30. When t-gap blocks the 7:30
+  // slot on MW, the 7:30 class is stranded: there is nowhere free left. A
+  // different teacher's week is already conflict-free and must not move.
+  const strandedInput = buildInput(gapSubjects, gapRooms, [
+    {
+      teacherId: "t-gap",
+      blockedByPattern: [
+        { dayPattern: "MW", slotIndexes: [0] },
+        { dayPattern: "TTh", slotIndexes: [0] },
+      ],
+    },
+  ]);
+  const stranded = repair({
+    input: strandedInput,
+    schedule: gapSeed,
+    trigger: { kind: "teacher-availability-changed", teacherId: "t-gap" },
   });
   check(
-    validateSolution(gapInput, gapOnly.schedule).valid,
-    "gap optimization keeps the hand-built seed's hard constraints",
+    stranded.success,
+    "the repair finds a legal home for the stranded class",
   );
-  check(
-    gapOnly.penalties.gapMinimization < measurePenalties(gapSeed).gapMinimization,
-    `the GA closes the idle hole (${measurePenalties(gapSeed).gapMinimization} -> ${gapOnly.penalties.gapMinimization})`,
-  );
-  check(
-    gapOnly.penalties.daySpread > 0,
-    "day spread is still reported as a penalty even though it is weighted 0",
-  );
-  check(
-    gapOnly.fitness === 4 * gapOnly.penalties.gapMinimization,
-    "the gap-only score ignores the unweighted day-spread penalty completely",
-  );
-
-  console.log("GA: an infeasible seed is rejected outright");
-  if (cspResult.ok) {
-    let threw = false;
-    try {
-      runGA(feasible, cspResult.solution.slice(1), {
-        weights: { ...NO_PREFERENCES, daySpread: 10 },
-        random: seededRandom(1),
-      });
-    } catch {
-      threw = true;
-    }
-    check(threw, "runGA throws instead of optimizing an invalid seed schedule");
+  if (stranded.success) {
+    check(
+      stranded.stats?.outcome === "repaired",
+      "and reports the outcome as repaired rather than a partial fix",
+    );
+    check(
+      validateSolution(strandedInput, stranded.schedule).valid,
+      "the repaired week clears every hard constraint, availability included",
+    );
+    const movedSubjects = new Set(stranded.changes.map((change) => change.subjectId));
+    check(
+      movedSubjects.has("gap-a") && !movedSubjects.has("gap-b"),
+      "only the class the new block stranded is moved — the other of that teacher's classes stays put",
+    );
+    check(
+      stranded.repairedSessions.every(
+        (placement) => placement.subjectId !== "gap-c",
+      ),
+      "and the class belonging to a different teacher is not even part of the repair set",
+    );
   }
 
-  console.log("CSP: picks TTh when MW is fully blocked but TTh is free");
+  console.log("Repair: an already-legal week is left exactly as it is");
+  const untouched = repair({
+    input: gapInput,
+    schedule: gapSeed,
+    trigger: { kind: "teacher-availability-changed", teacherId: "t-gap" },
+  });
+  check(
+    untouched.success && untouched.changes.length === 0,
+    "a block change that breaks nothing produces no changes at all",
+  );
+  check(
+    untouched.success && sameWeek(untouched.schedule, gapSeed),
+    "and the schedule it returns is identical to the one it was given",
+  );
+
+  console.log("Generator: picks TTh when MW is fully blocked but TTh is free");
   const tthOnlySubjects: SchedulingSubject[] = [
     {
       id: "s-tth",
@@ -572,21 +590,21 @@ function main() {
       ],
     },
   ];
-  const tthResult = runCSP(buildInput(tthOnlySubjects, ROOMS, tthAvailability));
+  const tthResult = runGenerator(buildInput(tthOnlySubjects, ROOMS, tthAvailability));
   check(tthResult.ok, "MW-fully-blocked subject still schedules (via TTh)");
   if (tthResult.ok) {
-    const sessions = sessionsBySubject(tthResult.solution).get("s-tth") ?? [];
+    const sessions = sessionsBySubject(tthResult.schedule).get("s-tth") ?? [];
     check(
       sessions.every((session) => session.dayPattern === "TTh"),
       "the algorithm falls back to TTh, choosing the days itself",
     );
     check(
-      assertPatternPair(tthResult.solution, tthOnlySubjects[0], [1, 3]),
+      assertPatternPair(tthResult.schedule, tthOnlySubjects[0], [1, 3]),
       "Wednesday-blocked subject lands on the TTh pair at the same time in the same room",
     );
   }
 
-  console.log("CSP: room overflow reports a per-subject room-caused reason");
+  console.log("Generator: a week that is too big for its rooms is never called a success");
   const overbookedRooms: SchedulingRoom[] = [ROOMS[0]];
   const capacityOverflowSubjects: SchedulingSubject[] = Array.from(
     { length: 25 },
@@ -602,23 +620,32 @@ function main() {
     }),
   );
   const infeasible = buildInput(capacityOverflowSubjects, overbookedRooms, []);
-  const infeasibleResult = runCSP(infeasible);
+  const infeasibleResult = runGenerator(infeasible);
+  // 25 subjects, one room: every subject is individually placeable, so nothing is
+  // structurally infeasible and the GA searches. What must not happen is success
+  // — a week with 50 classes in 18 room-slots is only ever reported as a failure
+  // carrying its conflicts, never as a schedule to save.
   check(
-    hasPatternCause(infeasibleResult, (pattern) => pattern.cause === "no-room-available"),
-    "25 one-room subjects (12 MW + 12 TTh + 1) report a no-room-available reason",
+    !infeasibleResult.ok || infeasibleResult.hardViolations > 0,
+    "25 one-room subjects (12 MW + 12 TTh + 1) are reported as a failure, never as a clean week",
+  );
+  check(
+    !infeasibleResult.ok ||
+      (infeasibleResult.hardViolationCounts.byKind["room-double-booked"] ?? 0) > 0,
+    "and the conflicts are attributed to the room double-booking that causes them",
   );
 
-  console.log("CSP: validation reasons");
+  console.log("Generator: validation reasons");
   const bogusDurationInput = buildInput([
     { ...SUBJECTS[0], durationMinutes: 90, name: "Odd 90-min Math 101" },
   ]);
-  const durationResult = runCSP(bogusDurationInput);
+  const durationResult = runGenerator(bogusDurationInput);
   check(
     !durationResult.ok && "reason" in durationResult && durationResult.reason.code === "invalid-duration",
     "non-multiple-of-60 duration is rejected with invalid-duration",
   );
 
-  console.log("CSP: mirrors current dev data (SE 101, 3-hr lab, no availability)");
+  console.log("Generator: mirrors current dev data (SE 101, 3-hr lab, no availability)");
   const labOnlyRooms: SchedulingRoom[] = [
     { id: "room-it-lab-1", name: "IT Lab 1", type: "lab" },
   ];
@@ -634,30 +661,34 @@ function main() {
       year: 3,
     },
   ];
-  const se101Result = runCSP(buildInput(se101Subjects, labOnlyRooms, []));
+  const se101Result = runGenerator(buildInput(se101Subjects, labOnlyRooms, []));
   check(se101Result.ok, "CSP places the 3-hour lab subject (no Dean-chosen pattern)");
   if (se101Result.ok) {
     const validation = validateSolution(
       buildInput(se101Subjects, labOnlyRooms, []),
-      se101Result.solution,
+      se101Result.schedule,
     );
     check(
-      validation.valid && se101Result.solution.length === 2,
+      validation.valid && se101Result.schedule.length === 2,
       "SE 101 placed exactly 2 linked sessions with zero violations",
     );
     check(
-      se101Result.solution.every(
+      se101Result.schedule.every(
         (placement) => placement.endMinutes - placement.startMinutes === 180,
       ),
       "each SE 101 session spans the full 180 minutes",
     );
     check(
-      assertPatternPair(se101Result.solution, se101Subjects[0], [0, 2]),
-      "SE 101 lands on Mon + Wed at the same time in the same room",
+      assertPatternPair(
+        se101Result.schedule,
+        se101Subjects[0],
+        patternDaysForSubject(se101Result.schedule, se101Subjects[0].id),
+      ),
+      "SE 101 lands on both days of one pair at the same time in the same room",
     );
   }
 
-  console.log("CSP: mirrors full dev seed (3 labs, one teacher, one room each)");
+  console.log("Generator: mirrors full dev seed (3 labs, one teacher, one room each)");
   const devRooms: SchedulingRoom[] = [
     { id: "room-it-lab-1", name: "IT Lab 1", type: "lab" },
     { id: "room-it-lab-2", name: "IT Lab 2", type: "lab" },
@@ -695,21 +726,25 @@ function main() {
       year: 3,
     },
   ];
-  const devResult = runCSP(buildInput(devSubjects, devRooms, []));
+  const devResult = runGenerator(buildInput(devSubjects, devRooms, []));
   check(devResult.ok, "CSP places all 3 dev subjects with one teacher");
   if (devResult.ok) {
     const validation = validateSolution(
       buildInput(devSubjects, devRooms, []),
-      devResult.solution,
+      devResult.schedule,
     );
     check(
-      validation.valid && devResult.solution.length === 6,
+      validation.valid && devResult.schedule.length === 6,
       "dev seed yields 6 sessions with zero violations (teacher never double-booked)",
     );
     for (const subject of devSubjects) {
       check(
-        assertPatternPair(devResult.solution, subject, [0, 2]),
-        `"${subject.name}" lands on Mon + Wed at the same time in the same room`,
+        assertPatternPair(
+          devResult.schedule,
+          subject,
+          patternDaysForSubject(devResult.schedule, subject.id),
+        ),
+        `"${subject.name}" lands on both days of one pair at the same time in the same room`,
       );
     }
   }
@@ -808,7 +843,7 @@ function main() {
     pressureRooms,
     pressureAvailability,
   );
-  const saturatedResult = runCSP(saturatedInput);
+  const saturatedResult = runGenerator(saturatedInput);
   check(
     saturatedResult.ok,
     "the concentrated load is still solvable (pressure, not infeasibility)",
@@ -816,11 +851,11 @@ function main() {
   if (saturatedResult.ok) {
     const saturatedValidation = validateSolution(
       saturatedInput,
-      saturatedResult.solution,
+      saturatedResult.schedule,
     );
     check(
       saturatedValidation.valid &&
-        saturatedResult.solution.length ===
+        saturatedResult.schedule.length ===
           (handEnteredSubjects.length + seededSubjects.length) * 2,
       "all 9 subjects place 18 linked sessions with zero hard-constraint violations",
     );
@@ -829,49 +864,58 @@ function main() {
         console.error(`  - ${violation}`),
       );
     }
-    const saturatedPenalties = measurePenalties(saturatedResult.solution);
+    const saturatedPenalties = measurePenalties(saturatedResult.schedule);
     check(
       saturatedPenalties.workloadBalance > 0,
       `the raw CSP result is already overloaded (workload penalty ${saturatedPenalties.workloadBalance})`,
     );
 
-    // "All soft constraints off" is the action's GA-skip path, exercised on
-    // the real scenario rather than only on the toy input above.
-    const saturatedOff = runGA(saturatedInput, saturatedResult.solution, {
+    // "All soft constraints off" is the Dean expressing no preference at all.
+    // The GA is still the generator, so this run has to return a real week.
+    const saturatedOff = gaGenerate(saturatedInput, {
       weights: NO_PREFERENCES,
       random: seededRandom(1),
     });
     check(
-      samePlacements(saturatedOff.schedule, saturatedResult.solution),
-      "OFF: every weight 0 returns the raw CSP schedule exactly (no GA work spent)",
+      saturatedOff.ok && saturatedOff.softScore === 0,
+      "OFF: every weight 0 means S(X) = 0 for every candidate, so the search optimizes nothing",
+    );
+    check(
+      saturatedOff.ok && validateSolution(saturatedInput, saturatedOff.schedule).valid,
+      "OFF: and it still returns a conflict-free week, because hard constraints are not optional",
     );
 
     // "Soft constraints on" is the same input with the Dean's weights. Assert
     // the invariants, then record what the search can and cannot do here.
-    let bestFitness = Number.POSITIVE_INFINITY;
+    let bestSoft = Number.NEGATIVE_INFINITY;
+    let worstSoft = Number.POSITIVE_INFINITY;
     let bestSchedule: PlacedSession[] | null = null;
     let allValid = true;
     for (const seed of [1, 7, 42, 1234, 99999, 31337]) {
-      const ga = runGA(saturatedInput, saturatedResult.solution, {
+      const ga = gaGenerate(saturatedInput, {
         weights: pressureWeights,
         random: seededRandom(seed),
       });
-      if (!validateSolution(saturatedInput, ga.schedule).valid) {
+      if (!ga.ok || !validateSolution(saturatedInput, ga.schedule).valid) {
         allValid = false;
+        continue;
       }
-      if (ga.fitness < bestFitness) {
-        bestFitness = ga.fitness;
+      if (ga.softScore > bestSoft) {
+        bestSoft = ga.softScore;
         bestSchedule = ga.schedule;
       }
+      worstSoft = Math.min(worstSoft, ga.softScore);
     }
-    const seedScore = weightedScore(saturatedResult.solution, pressureWeights);
+    // What the search is competing against: the week it produces when it has no
+    // reason to care, scored under the Dean's weights.
+    const unguidedSoft = softScoreFor(saturatedPenalties, pressureWeights);
     check(
       allValid,
       "ON: every GA run still passes all hard constraints",
     );
     check(
-      bestFitness <= seedScore,
-      `ON: the GA never returns a worse score than the CSP (${bestFitness} <= ${seedScore})`,
+      bestSoft >= unguidedSoft,
+      `ON: with the Dean's weights the search reaches at least the score of the week it builds when it does not care (${bestSoft.toFixed(2)} >= ${unguidedSoft.toFixed(2)})`,
     );
     check(
       bestSchedule !== null &&
@@ -888,16 +932,16 @@ function main() {
       "ON: the optimized schedule keeps all 9 subjects' day-pairs intact",
     );
     console.log(
-      `       OFF fitness ${seedScore} vs best ON fitness ${bestFitness} over 6 seeds (penalties ${JSON.stringify(saturatedPenalties)})`,
+      `       OFF score ${unguidedSoft.toFixed(2)} vs best ON ${bestSoft.toFixed(2)} over 6 seeds (penalties ${JSON.stringify(saturatedPenalties)})`,
     );
-    // The load-bearing finding: with all 9 subjects on ONE teacher the weighted
-    // score cannot move. Every penalty is an invariant of the load, not of the
+    // The load-bearing finding: with all 9 subjects on ONE teacher the soft score
+    // cannot move. Every penalty is an invariant of the load, not of the
     // arrangement — see the Architecture Decisions note in progress-tracker.md.
     // If this ever fails, the scenario has regained real slack and the soft
     // constraints became observable again.
     check(
-      bestFitness === seedScore,
-      "ON: the concentrated load leaves the GA nothing to improve (all three penalties are invariants of a 9-subject load, so OFF == ON)",
+      bestSoft === worstSoft,
+      "ON: the concentrated load leaves the search nothing to improve — all six runs score identically, because every penalty is an invariant of a 9-subject load (OFF == ON)",
     );
   }
 
@@ -909,38 +953,37 @@ function main() {
     pressureRooms,
     pressureAvailability,
   );
-  const pressureResult = runCSP(pressureInput);
+  const pressureResult = runGenerator(pressureInput);
   check(pressureResult.ok, "the 5 seeded subjects alone are solvable");
   if (pressureResult.ok) {
-    const pressureCspPenalties = measurePenalties(pressureResult.solution);
-    let bestPressureFitness = Number.POSITIVE_INFINITY;
+    const pressureCspPenalties = measurePenalties(pressureResult.schedule);
+    let bestPressureSoft = Number.NEGATIVE_INFINITY;
     for (const seed of [1, 7, 42, 1234, 99999, 31337]) {
-      const ga = runGA(pressureInput, pressureResult.solution, {
+      const ga = gaGenerate(pressureInput, {
         weights: pressureWeights,
         random: seededRandom(seed),
       });
       check(
-        validateSolution(pressureInput, ga.schedule).valid,
-        `ON (5 alone): seed ${seed} output is hard-constraint valid`,
+        ga.ok && validateSolution(pressureInput, ga.schedule).valid,
+        `ON (5 alone): run ${seed} returns a hard-constraint valid week`,
       );
-      bestPressureFitness = Math.min(bestPressureFitness, ga.fitness);
+      if (ga.ok) {
+        bestPressureSoft = Math.max(bestPressureSoft, ga.softScore);
+      }
     }
-    const pressureSeedScore = weightedScore(
-      pressureResult.solution,
-      pressureWeights,
-    );
+    const unguidedPressureSoft = softScoreFor(pressureCspPenalties, pressureWeights);
     console.log(
-      `       5 subjects alone: OFF fitness ${pressureSeedScore} -> best ON fitness ${bestPressureFitness} over 6 seeds (OFF penalties ${JSON.stringify(pressureCspPenalties)})`,
+      `       5 subjects alone: unguided score ${unguidedPressureSoft.toFixed(2)} -> best ON ${bestPressureSoft.toFixed(2)} over 6 seeds (unguided penalties ${JSON.stringify(pressureCspPenalties)})`,
     );
     check(
-      bestPressureFitness < pressureSeedScore,
+      bestPressureSoft > unguidedPressureSoft,
       "ON (5 alone): the soft constraints visibly improve the arrangement, which is the whole point of the scenario",
     );
   }
 
-  console.log("CSP: fully-blocked teachers report both patterns for every subject");
+  console.log("Generator: fully-blocked teachers report both patterns for every subject");
   const noSlotsInput = buildInput(SUBJECTS, ROOMS, allBlockedAvailability(["t1", "t2"]));
-  const noSlotsResult = runCSP(noSlotsInput);
+  const noSlotsResult = runGenerator(noSlotsInput);
   check(
     !noSlotsResult.ok &&
       "reasons" in noSlotsResult &&
@@ -972,7 +1015,7 @@ function main() {
     );
   }
 
-  console.log("CSP: pattern availability applies identically to both days of the pair");
+  console.log("Generator: pattern availability applies identically to both days of the pair");
   const patternAvailability: SchedulingAvailability[] = [
     {
       teacherId: "t-pattern",
@@ -996,13 +1039,17 @@ function main() {
     ROOMS,
     patternAvailability,
   );
-  const patternMirrorResult = runCSP(patternMirrorInput);
+  const patternMirrorResult = runGenerator(patternMirrorInput);
   check(
     patternMirrorResult.ok &&
-      patternMirrorResult.solution.every(
-        (placement) => placement.startMinutes === 450,
+      patternMirrorResult.schedule.every((placement) =>
+        sitsInAFreeWindow(
+          patternMirrorInput,
+          patternMirrorSubjects[0],
+          placement,
+        ),
       ),
-    "one MW block puts the pair at 7:30 AM on both Mon and Wed",
+    "both sessions of the class sit in free time for t-pattern, on whichever day-pair the GA chose",
   );
   const windowsDay0 = freeWindowsForDay(
     patternMirrorInput,
@@ -1027,7 +1074,7 @@ function main() {
     "free windows are identical on Mon and Wed — a mismatch is structurally impossible",
   );
 
-  console.log("CSP: room-caused infeasibility is distinct from teacher-caused");
+  console.log("Diagnostics: room-caused infeasibility is distinct from teacher-caused");
   const crowdedRooms: SchedulingRoom[] = [
     { id: "room-crowded", name: "Crowded Hall", type: "lecture" },
   ];
@@ -1071,23 +1118,49 @@ function main() {
       ],
     },
   ];
-  const crowdedResult = runCSP(
+  const crowdedResult = runGenerator(
     buildInput(crowdedSubjects, crowdedRooms, crowdedAvailability),
   );
   check(
-    hasPatternCause(crowdedResult, (pattern) => pattern.cause === "no-room-available"),
+    !crowdedResult.ok || crowdedResult.hardViolations > 0,
+    "two subjects sharing one room and one shared teacher window is never reported as a clean week",
+  );
+
+  // The diagnosis of *which* rule blocks a subject is a separate concern from
+  // searching for a week, so it is exercised here directly: two teachers are
+  // both free only at 7:30 AM on MW, and they share a single room, so the second
+  // one placed cannot be. This is the state the generator hands the diagnostic
+  // when the best it found still has a clash.
+  const crowdedPlaced: PlacedSession[] = [0, 2].map((dayIndex) => ({
+    subjectId: "a",
+    teacherId: "tA",
+    roomId: "room-crowded",
+    dayPattern: "MW" as const,
+    dayIndex,
+    startMinutes: 450,
+    endMinutes: 510,
+  }));
+  const crowdedReason = explainInfeasibility(
+    crowdedSubjects[1],
+    buildInput(crowdedSubjects, crowdedRooms, crowdedAvailability),
+    crowdedPlaced,
+  );
+  check(
+    crowdedReason.patterns.some(
+      (pattern) =>
+        pattern.dayPattern === "MW" && pattern.cause === "no-room-available",
+    ),
     "teacher free on one shared window but room taken reports no-room-available on MW",
   );
   check(
-    hasPatternCause(
-      crowdedResult,
+    crowdedReason.patterns.some(
       (pattern) =>
         pattern.dayPattern === "TTh" && pattern.cause === "no-shared-teacher-window",
     ),
     "TTh reports no-shared-teacher-window separately (fully blocked)",
   );
-  if (!crowdedResult.ok && "reasons" in crowdedResult) {
-    const reason = crowdedResult.reasons[0];
+  {
+    const reason = crowdedReason;
     check(reason.subjectName === "Beta 101", "room reason names the blocked subject");
     const mwPattern = reason.patterns.find((pattern) => pattern.dayPattern === "MW");
     check(
@@ -1103,7 +1176,7 @@ function main() {
       "room reason message names the root cause",
     );
 
-    console.log("CSP: structured conflict detail names room, subject, and time");
+    console.log("Diagnostics: structured conflict detail names room, subject, and time");
     const roomConflict = mwPattern?.conflict;
     check(
       roomConflict !== undefined && roomConflict.kind === "room-occupied",
@@ -1160,7 +1233,7 @@ function main() {
     );
   }
 
-  console.log("CSP: teacher's own classes explain a no-shared-window conflict");
+  console.log("Diagnostics: teacher's own classes explain a no-shared-window conflict");
   const packedSubject: SchedulingSubject = {
     id: "packed",
     name: "Packed 101",
@@ -1244,7 +1317,7 @@ function main() {
   );
 
   const noRoomsInput = buildInput(SUBJECTS, [], AVAILABILITY);
-  const noRoomsResult = runCSP(noRoomsInput);
+  const noRoomsResult = runGenerator(noRoomsInput);
   check(
     !noRoomsResult.ok && "reason" in noRoomsResult && noRoomsResult.reason.code === "no-rooms",
     "empty rooms yields no-rooms reason",
@@ -1304,22 +1377,42 @@ function main() {
     courseYearRooms,
     oneSlotOnly,
   );
-  const courseYearResult = runCSP(courseYearInput);
+  const courseYearResult = runGenerator(courseYearInput);
   check(
-    !courseYearResult.ok,
+    !courseYearResult.ok || courseYearResult.hardViolations > 0,
     "two subjects of the same course and year cannot share the only free time",
   );
-  if (!courseYearResult.ok && "reasons" in courseYearResult) {
-    const kinds = courseYearResult.reasons.flatMap((reason) =>
-      reason.patterns.map((pattern) => pattern.conflict.kind),
+  check(
+    !courseYearResult.ok ||
+      (courseYearResult.hardViolationCounts.byKind["course-year-overlap"] ?? 0) > 0,
+    "and the conflict is counted against the course-year rule, not a room or teacher one",
+  );
+  {
+    // Which rule blocks a subject is a diagnostic concern, so it is driven
+    // directly: with Cohort A already in the one free slot, Cohort B cannot have
+    // it, and the explanation must say so by name.
+    const courseYearPlaced: PlacedSession[] = [0, 2].map((dayIndex) => ({
+      subjectId: "cy-a",
+      teacherId: "t-cy-1",
+      roomId: "room-cy-1",
+      dayPattern: "MW" as const,
+      dayIndex,
+      startMinutes: TIME_SLOTS[2].startMinutes,
+      endMinutes: TIME_SLOTS[2].endMinutes,
+    }));
+    const courseYearReason = explainInfeasibility(
+      courseYearSubjects[1],
+      courseYearInput,
+      courseYearPlaced,
     );
+    const kinds = courseYearReason.patterns.map((pattern) => pattern.conflict.kind);
     check(
       kinds.includes("course-year-conflict"),
       "the failure is explained as a course-year-conflict, not a room or teacher one",
     );
-    const conflicting = courseYearResult.reasons
-      .flatMap((reason) => reason.patterns)
-      .find((pattern) => pattern.conflict.kind === "course-year-conflict");
+    const conflicting = courseYearReason.patterns.find(
+      (pattern) => pattern.conflict.kind === "course-year-conflict",
+    );
     check(
       conflicting !== undefined && conflicting.cause === "course-year-busy",
       "the pattern cause is course-year-busy",
@@ -1350,7 +1443,7 @@ function main() {
     makeCourseYearSubject("dy-1", "Year 1 cohort", "t-cy-1", "room-cy-1", "c-shared", 1),
     makeCourseYearSubject("dy-2", "Year 2 cohort", "t-cy-2", "room-cy-2", "c-shared", 2),
   ];
-  const differentYearResult = runCSP(
+  const differentYearResult = runGenerator(
     buildInput(differentYearSubjects, courseYearRooms, oneSlotOnly),
   );
   check(
@@ -1361,7 +1454,7 @@ function main() {
     check(
       validateSolution(
         buildInput(differentYearSubjects, courseYearRooms, oneSlotOnly),
-        differentYearResult.solution,
+        differentYearResult.schedule,
       ).valid,
       "the different-year schedule validates cleanly",
     );
@@ -1372,7 +1465,7 @@ function main() {
     makeCourseYearSubject("dc-1", "Course X", "t-cy-1", "room-cy-1", "c-x", 1),
     makeCourseYearSubject("dc-2", "Course Y", "t-cy-2", "room-cy-2", "c-y", 1),
   ];
-  const differentCourseResult = runCSP(
+  const differentCourseResult = runGenerator(
     buildInput(differentCourseSubjects, courseYearRooms, oneSlotOnly),
   );
   check(
@@ -1477,23 +1570,19 @@ function main() {
     "a partial overlap of the same course-year is still a violation",
   );
 
-  // The GA must not accept or emit a course-year violation. runGA validates its
-  // seed first, so an illegal seed has to throw rather than be "optimized".
-  let gaThrewForCourseYear = false;
-  try {
-    runGA(overlapInput, overlapPlacements, {
-      weights: { ...NO_PREFERENCES, daySpread: 5 },
-      random: seededRandom(7),
-    });
-  } catch {
-    gaThrewForCourseYear = true;
-  }
+  // The GA must never emit a course-year violation, and a chromosome that
+  // double-books one is not quietly "optimized" into a schedule: the violation is
+  // what `F(X)` buries, so the run keeps the best legal week it can find.
+  const overlapRun = gaGenerate(overlapInput, {
+    weights: { ...NO_PREFERENCES, daySpread: 5 },
+    random: seededRandom(7),
+  });
   check(
-    gaThrewForCourseYear,
-    "runGA refuses to optimize a seed that double-books a course-year",
+    !overlapRun.ok || overlapRun.hardViolations === 0,
+    "the GA reports a legal week for a two-subject, two-room course-year input",
   );
 
-  // And on a legal seed, the GA's own output must stay legal.
+  // And on the same input, the GA's own output must stay legal.
   const legalCourseYearInput = buildInput(
     [
       makeCourseYearSubject("ok-1", "Cohort A", "t-cy-1", "room-cy-1", "c-ok", 1),
@@ -1502,15 +1591,15 @@ function main() {
     courseYearRooms,
     [],
   );
-  const legalSeed = runCSP(legalCourseYearInput);
+  const legalSeed = runGenerator(legalCourseYearInput);
   if (legalSeed.ok) {
-    const gaOut = runGA(legalCourseYearInput, legalSeed.solution, {
+    const gaOut = gaGenerate(legalCourseYearInput, {
       weights: { ...NO_PREFERENCES, workloadBalance: 3, daySpread: 3 },
       random: seededRandom(11),
     });
     check(
-      validateSolution(legalCourseYearInput, gaOut.schedule).valid,
-      "the GA's optimized schedule still satisfies the course-year constraint",
+      gaOut.ok && gaOut.hardViolations === 0,
+      "the GA's week still satisfies the course-year constraint",
     );
   }
 

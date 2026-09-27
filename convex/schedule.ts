@@ -18,12 +18,12 @@ import type {
   ScheduleSettings,
   SoftConstraintKey,
 } from "../types/scheduleSettings";
-import { runCSP } from "./scheduling/csp";
-import { hasActiveConstraint, runGA } from "./scheduling/ga";
-import { validateSolution } from "./scheduling/validate";
+import { gaGenerate } from "./scheduling/gaGenerate";
+import { repair, type RepairStats } from "./scheduling/repair";
 import { isDean, roleOf } from "./roles";
 import type {
   InfeasibilityReason,
+  PlacedSession,
   SchedulingAvailability,
   SchedulingInput,
   SoftConstraintWeights,
@@ -88,15 +88,23 @@ type GenerateActionResult =
       ok: true;
       count: number;
       /**
-       * `null` when the GA was skipped (no soft constraint enabled) — the
-       * schedule is then the raw CSP output and there is no score to show.
+       * The GA's soft score for the week it built. Never `null`: the GA *is* the
+       * generator now, so there is always a score, and it is 0 when every
+       * preference is switched off.
        */
-      optimization: OptimizationResult | null;
+      optimization: OptimizationResult;
     }
   | {
       ok: false;
       error: string;
       infeasibleSubjects?: readonly InfeasibilityReason[];
+      /**
+       * The conflicts left in the best week the GA could find. Present when the
+       * search ran but could not reach a conflict-free arrangement — the
+       * thesis's third output, a conflict report, rather than a broken schedule
+       * written to the database.
+       */
+      conflicts?: readonly string[];
     };
 
 type ScheduleSettingsResult =
@@ -310,6 +318,178 @@ function buildSchedulingInput(
   };
 }
 
+/**
+ * One stored schedule row, built from a placement and the snapshots the two
+ * views need to draw the class.
+ *
+ * Shared by generation and by repair so a row written by either carries
+ * identical fields — a repair that rebuilt rows its own way would quietly
+ * produce a schedule the grid cannot draw.
+ */
+function toSessionRow(
+  placement: PlacedSession,
+  subjectById: ReadonlyMap<string, SubjectRow>,
+  roomById: ReadonlyMap<string, RoomRow>,
+) {
+  const subject = subjectById.get(placement.subjectId);
+  const room = roomById.get(placement.roomId);
+
+  // Every placement comes from the subject rows the engine was given, so a miss
+  // means the input changed mid-run. Fail loudly instead of writing a row with an
+  // empty course reference.
+  if (!subject) {
+    throw new Error("A scheduled subject is missing from the scheduling input");
+  }
+
+  return {
+    subjectId: placement.subjectId as Id<"subjects">,
+    subjectName: subject.name,
+    // Snapshotted, like the course/year below it, so a schedule row carries
+    // everything either view needs to draw a class — and so a subject repainted
+    // after a generate only reaches the timetable on the next one, with every
+    // other snapshot moving at the same time.
+    subjectColor: asSubjectColorToken(subject.color),
+    courseId: subject.courseId as Id<"courses">,
+    courseCode: subject.courseCode,
+    courseName: subject.courseName,
+    year: subject.year,
+    teacherId: placement.teacherId,
+    teacherName: subject.teacherName,
+    roomId: placement.roomId as Id<"rooms">,
+    roomName: room?.name ?? "Unknown",
+    roomType: room?.type ?? ("lecture" as const),
+    dayPattern: placement.dayPattern,
+    dayIndex: placement.dayIndex,
+    startMinutes: placement.startMinutes,
+    endMinutes: placement.endMinutes,
+  };
+}
+
+/**
+ * The second half of the thesis's workflow (§7): a teacher's availability has
+ * just changed, which can strand a class they were placed for, so the schedule
+ * is repaired locally and automatically.
+ *
+ * There is no "repair" button and no confirmation step. The change is the
+ * trigger; the engine moves the classes the new blocks actually broke — and only
+ * those — and writes the result. A teacher who blocks one afternoon does not get
+ * their Monday reshuffled.
+ *
+ * If the repair fails the schedule is left exactly as it was. A teacher is not
+ * going to lose a class they already had because their new availability made the
+ * week impossible; they are told instead, and a Dean can regenerate.
+ */
+export const repairAfterAvailabilityChange = internalMutation({
+  args: { teacherId: v.string() },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    outcome: "repaired" | "not-needed" | "no-schedule" | "failed";
+    movedSubjects: number;
+    reason?: string;
+    stats?: RepairStats;
+  }> => {
+    const scheduleRows = await ctx.db.query("schedules").collect();
+    if (scheduleRows.length === 0) {
+      return { outcome: "no-schedule", movedSubjects: 0 };
+    }
+
+    const availabilityDocs = await ctx.db.query("availability").collect();
+    const availability: AvailabilityPayload[] = availabilityDocs.map((doc) => ({
+      teacherId: doc.teacherId,
+      blockedSlots: doc.blockedSlots,
+    }));
+
+    const roomDocs = await ctx.db.query("rooms").collect();
+    const rooms: RoomRow[] = roomDocs.map((room) => ({
+      _id: room._id,
+      name: room.name,
+      type: room.type,
+    }));
+
+    const subjectDocs = await ctx.db.query("subjects").collect();
+    const courseDocs = await ctx.db.query("courses").collect();
+    const courseById = new Map(courseDocs.map((course) => [course._id, course]));
+    const roomTypeById = new Map(rooms.map((room) => [room._id, room.type]));
+    const subjects: SubjectRow[] = subjectDocs.map((subject) => {
+      const course = courseById.get(subject.courseId);
+      return {
+        _id: subject._id,
+        name: subject.name,
+        durationMinutes: subject.durationMinutes,
+        roomId: subject.roomId,
+        roomType: roomTypeById.get(subject.roomId) ?? "lecture",
+        courseId: subject.courseId,
+        courseCode: course?.code ?? "",
+        courseName: course?.name ?? "",
+        year: subject.year,
+        teacherId: subject.teacherId,
+        teacherName: subject.teacherId,
+        color: subject.color,
+      };
+    });
+
+    const input = buildSchedulingInput(subjects, rooms, availability);
+    const current: PlacedSession[] = scheduleRows.map((row) => ({
+      subjectId: row.subjectId,
+      teacherId: row.teacherId,
+      roomId: row.roomId,
+      dayPattern: row.dayPattern,
+      dayIndex: row.dayIndex,
+      startMinutes: row.startMinutes,
+      endMinutes: row.endMinutes,
+    }));
+
+    const result = repair({
+      input,
+      schedule: current,
+      trigger: { kind: "teacher-availability-changed", teacherId: args.teacherId },
+    });
+
+    if (result.stats?.outcome === "not-needed") {
+      return { outcome: "not-needed", movedSubjects: 0, stats: result.stats };
+    }
+    if (!result.success) {
+      return {
+        outcome: "failed",
+        movedSubjects: 0,
+        reason: result.reason,
+        stats: result.stats,
+      };
+    }
+
+    const movedSubjectIds = new Set(
+      result.changes.map((change) => change.subjectId),
+    );
+    const subjectById = new Map(subjects.map((subject) => [subject._id, subject]));
+    const roomById = new Map(rooms.map((room) => [room._id, room]));
+    const now = Date.now();
+
+    // Replace only the rows for the classes that moved. Every other row is left
+    // untouched, which is what makes the repair local in storage as well as in
+    // the search.
+    for (const row of scheduleRows) {
+      if (movedSubjectIds.has(row.subjectId)) {
+        await ctx.db.delete(row._id);
+      }
+    }
+    for (const placement of result.repairedSessions) {
+      await ctx.db.insert("schedules", {
+        ...toSessionRow(placement, subjectById, roomById),
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    return {
+      outcome: "repaired",
+      movedSubjects: movedSubjectIds.size,
+      stats: result.stats,
+    };
+  },
+});
+
 export const generate = action({
   args: {},
   handler: async (ctx): Promise<GenerateActionResult> => {
@@ -344,7 +524,25 @@ export const generate = action({
       availabilityResult.data,
     );
 
-    const result = runCSP(input);
+    // The GA builds the whole week from nothing (§7). The old pipeline built it
+    // with the CSP and then polished it with `runGA`, which is the ordering the
+    // thesis rejects — and it meant the schedule existed before any optimization
+    // was attempted, so the search could only ever rearrange a finished answer.
+    //
+    // Soft constraints are not a separate pass any more: they are the fitness
+    // function the GA maximizes while it searches.
+    const settingsResult: ScheduleSettingsResult = await ctx.runQuery(
+      api.scheduleSettings.get,
+    );
+    // If the settings record cannot be read the week is still worth building —
+    // with every preference off the search is simply a hunt for the fewest
+    // conflicts, which is a valid, if plain, schedule.
+    const settings = settingsResult.ok
+      ? settingsResult.data
+      : DEFAULT_SCHEDULE_SETTINGS;
+    const weights = weightsFromSettings(settings);
+
+    const result = gaGenerate(input, { weights });
     if (!result.ok) {
       if ("reason" in result) {
         return { ok: false as const, error: result.reason.message };
@@ -361,86 +559,32 @@ export const generate = action({
       };
     }
 
-    const validation = validateSolution(input, result.solution);
-    if (!validation.valid) {
+    // The GA is allowed to propose invalid weeks while it searches — that is what
+    // the 1001 penalty is for — but the best one it ends with is still a broken
+    // week, and a broken week is not a schedule. Storing it would hand the Dean a
+    // timetable with clashes in it and no indication of which, which is strictly
+    // worse than the old pipeline's guaranteed-valid output. So the conflicts are
+    // reported instead, and the database keeps whatever it had.
+    if (!result.valid) {
       return {
         ok: false as const,
-        error: `Generated schedule failed internal validation: ${validation.violations.join("; ")}`,
+        error: `The Genetic Algorithm could not find a conflict-free week. The closest it got still had ${result.hardViolations} ${result.hardViolations === 1 ? "conflict" : "conflicts"} — see the list below. Nothing was saved.`,
+        conflicts: result.violations,
       };
     }
 
-    // Soft constraints are a best-effort refinement: if the settings record
-    // can't be read we generate exactly as before (no GA) rather than failing a
-    // generation that is otherwise perfectly good.
-    const settingsResult: ScheduleSettingsResult = await ctx.runQuery(
-      api.scheduleSettings.get,
-    );
-    const settings = settingsResult.ok
-      ? settingsResult.data
-      : DEFAULT_SCHEDULE_SETTINGS;
-    const weights = weightsFromSettings(settings);
-
-    let solution = result.solution;
-    let optimization: OptimizationResult | null = null;
-
-    // With every soft constraint off there is nothing to optimize, so the GA is
-    // skipped entirely rather than burning compute on an all-zero fitness.
-    if (hasActiveConstraint(weights)) {
-      const gaResult = runGA(input, result.solution, { weights });
-      const gaValidation = validateSolution(input, gaResult.schedule);
-      if (gaValidation.valid) {
-        solution = gaResult.schedule;
-        optimization = {
-          fitness: gaResult.fitness,
-          constraints: activeConstraintKeys(weights),
-        };
-      }
-      // A validation failure here is an engine bug, not a user error: the GA's
-      // operators are supposed to be validity-preserving and its best member
-      // starts as the CSP's own solution. The optimization is best effort, so
-      // fall back to the untouched CSP schedule and report no score rather than
-      // failing a generation that is otherwise perfectly good.
-    }
+    const solution = result.schedule;
+    const optimization: OptimizationResult = {
+      fitness: result.softScore,
+      constraints: activeConstraintKeys(weights),
+    };
 
     const subjectById = new Map(subjectsResult.data.map((subject) => [subject._id, subject]));
     const roomById = new Map(roomsResult.data.map((room) => [room._id, room]));
 
-    const sessions = solution.map((placement) => {
-      const subject = subjectById.get(placement.subjectId);
-      const room = roomById.get(placement.roomId);
-
-      // Every placement comes from the subject rows the CSP was given, so a
-      // miss means the input changed mid-run. Fail loudly instead of writing a
-      // row with an empty course reference.
-      if (!subject) {
-        throw new Error(
-          "A scheduled subject is missing from the scheduling input",
-        );
-      }
-
-      return {
-        subjectId: placement.subjectId as Id<"subjects">,
-        subjectName: subject.name,
-        // Snapshotted, like the course/year below it, so a schedule row carries
-        // everything either view needs to draw a class — and so a subject
-        // repainted after a generate only reaches the timetable on the next one,
-        // with every other snapshot moving at the same time.
-        subjectColor: asSubjectColorToken(subject.color),
-        courseId: subject.courseId as Id<"courses">,
-        courseCode: subject.courseCode,
-        courseName: subject.courseName,
-        year: subject.year,
-        teacherId: placement.teacherId,
-        teacherName: subject.teacherName,
-        roomId: placement.roomId as Id<"rooms">,
-        roomName: room?.name ?? "Unknown",
-        roomType: room?.type ?? "lecture",
-        dayPattern: placement.dayPattern,
-        dayIndex: placement.dayIndex,
-        startMinutes: placement.startMinutes,
-        endMinutes: placement.endMinutes,
-      };
-    });
+    const sessions = solution.map((placement) =>
+      toSessionRow(placement, subjectById, roomById),
+    );
 
     const saved: number = await ctx.runMutation(
       internal.schedule.saveGenerated,

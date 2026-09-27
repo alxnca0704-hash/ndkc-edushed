@@ -225,13 +225,20 @@ export type GenerateScheduleResult =
       ok: true;
       count: number;
       /**
-       * `null` when the GA was skipped because no soft constraint is enabled —
-       * there is no score to show in that case, and showing a 0 would be a lie.
+       * The GA's soft score for the week it built, 0-100. Always present: the GA
+       * is the generator, so there is always a score — 0 when no soft constraint
+       * is enabled, which says the search optimized only the absence of clashes.
        */
-      optimization: OptimizationResult | null;
+      optimization: OptimizationResult;
     }
   | {
       ok: false;
       error: string;
       infeasibleSubjects?: readonly InfeasibleSubject[];
+      /**
+       * The conflicts left in the best week the GA could build. Shown instead of
+       * a schedule when the search ran but never reached a conflict-free
+       * arrangement — nothing is written to the database in that case.
+       */
+      conflicts?: readonly string[];
     };

@@ -34,9 +34,15 @@ export interface UseScheduleResult {
   generateError: string | null;
   infeasibleSubjects: InfeasibleSubject[] | null;
   /**
-   * Fitness of the schedule currently on screen. Only set by a generation that
-   * actually ran the GA, and cleared when a new generation starts — it describes
-   * one specific run, not the schedule table.
+   * The conflicts left in the best week the GA could build, when the search ran
+   * but never reached a conflict-free arrangement. Nothing is saved in that case,
+   * so this list is the only account of what went wrong.
+   */
+  conflicts: string[] | null;
+  /**
+   * The GA's soft score (0-100) for the schedule currently on screen. Only set
+   * by a successful generation, and cleared when a new generation starts — it
+   * describes one specific run, not the schedule table.
    */
   optimization: OptimizationResult | null;
   generate: () => Promise<GenerateScheduleResult>;
@@ -68,6 +74,7 @@ export function useSchedule(): UseScheduleResult {
   const [infeasibleSubjects, setInfeasibleSubjects] = useState<
     InfeasibleSubject[] | null
   >(null);
+  const [conflicts, setConflicts] = useState<string[] | null>(null);
   const [optimization, setOptimization] = useState<OptimizationResult | null>(
     null,
   );
@@ -161,6 +168,7 @@ export function useSchedule(): UseScheduleResult {
     setIsGenerating(true);
     setGenerateError(null);
     setInfeasibleSubjects(null);
+    setConflicts(null);
     // The score belongs to one generation, so a new one starts without it
     // rather than leaving the previous run's number next to the button.
     setOptimization(null);
@@ -170,6 +178,9 @@ export function useSchedule(): UseScheduleResult {
         setGenerateError(result.error);
         if (result.infeasibleSubjects && result.infeasibleSubjects.length > 0) {
           setInfeasibleSubjects([...result.infeasibleSubjects]);
+        }
+        if (result.conflicts && result.conflicts.length > 0) {
+          setConflicts([...result.conflicts]);
         }
       } else {
         setOptimization(result.optimization);
@@ -192,6 +203,7 @@ export function useSchedule(): UseScheduleResult {
     isGenerating,
     generateError,
     infeasibleSubjects,
+    conflicts,
     optimization,
     generate,
   };

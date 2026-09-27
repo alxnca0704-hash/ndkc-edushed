@@ -32,6 +32,7 @@ export function SchedulePage() {
     isGenerating,
     generateError,
     infeasibleSubjects,
+    conflicts,
     optimization,
     generate,
   } = useSchedule();
@@ -54,9 +55,9 @@ export function SchedulePage() {
     const result = await generate();
     if (result.ok) {
       toast.success(
-        `Schedule ${result.optimization ? "generated and optimized" : "generated"} — ${
-          result.count
-        } ${result.count === 1 ? "class" : "classes"} placed.`,
+        `Schedule generated — ${result.count} ${
+          result.count === 1 ? "class" : "classes"
+        } placed.`,
       );
     } else {
       toast.error("Couldn't generate a schedule");
@@ -89,6 +90,33 @@ export function SchedulePage() {
             onRetry={handleGenerate}
             isRetrying={isGenerating}
           />
+        );
+      }
+      if (conflicts && conflicts.length > 0) {
+        // The GA searched and never reached a conflict-free week. The closest it
+        // got is shown instead of a schedule, because a timetable with clashes
+        // in it and no explanation is the one outcome the Dean cannot act on.
+        return (
+          <div className="flex flex-col gap-4">
+            <ErrorState
+              title="Couldn't generate a conflict-free schedule"
+              message={generateError}
+              onRetry={handleGenerate}
+            />
+            <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4">
+              <p className="text-sm font-medium">
+                Conflicts the search could not resolve
+              </p>
+              <ul className="mt-2 flex flex-col gap-1 text-sm text-muted-foreground">
+                {conflicts.map((conflict) => (
+                  <li key={conflict} className="flex gap-2">
+                    <span aria-hidden="true">&bull;</span>
+                    <span>{conflict}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
         );
       }
       return (
@@ -153,16 +181,17 @@ export function SchedulePage() {
           grid.classCount === 1 ? "class" : "classes"
         } scheduled this week for ${activeGroup?.label ?? "this course and year"}.`;
 
-  // Only rendered when the GA actually ran — with every soft constraint off
-  // there is no score, and printing a 0 or a dash would imply one.
-  const optimizationLine = optimization ? (
+  // The GA is what builds the week, so there is always a score to show — it is
+  // 0 when every preference is switched off, which is honest: with no soft
+  // constraint enabled the search optimized nothing but the absence of clashes.
+  const optimizationLine = (
     <p className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
       <Badge variant="secondary" className="tabular-nums">
-        {optimization.fitness}
+        {optimization?.fitness ?? 0}
       </Badge>
       <span>
-        Optimization score — lower is better
-        {optimization.constraints.length > 0
+        Preference score out of 100 — higher is better
+        {optimization && optimization.constraints.length > 0
           ? `, weighted by ${optimization.constraints
               .map((key) => SOFT_CONSTRAINT_LABELS[key])
               .join(", ")}`
@@ -170,7 +199,7 @@ export function SchedulePage() {
         .
       </span>
     </p>
-  ) : null;
+  );
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">
