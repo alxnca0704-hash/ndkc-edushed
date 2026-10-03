@@ -1,11 +1,11 @@
 "use client";
 
-import type { CSSProperties } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "cn";
 
+import { AppSidebarHeader } from "@/components/shared/AppSidebarHeader";
 import {
   Sidebar,
   SidebarContent,
@@ -37,16 +37,8 @@ export function AppSidebar({
   const pathname = usePathname();
 
   return (
-    <Sidebar
-      collapsible="icon"
-      style={
-        {
-          top: "var(--app-header-height)",
-          bottom: "0px",
-          height: "auto",
-        } as CSSProperties
-      }
-    >
+    <Sidebar collapsible="icon">
+      <AppSidebarHeader />
       <SidebarContent className="gap-2">
         {groups.map((group, groupIndex) => (
           <SidebarGroup

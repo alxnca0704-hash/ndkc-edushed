@@ -1685,11 +1685,10 @@ and the 12-row grid at 7:30 AM and 6:30 PM with an empty first/last slot.
   a real second teacher's subject + a regenerate is what the browser check
   needs.
 - The antd/shadcn split: existing dashboard components
-  (`DeanDashboard`, `TeacherDashboard`, `AppHeader`, root antd
-  `ConfigProvider`) still use antd, while new UI (DeanSidebar, Subject
-  Management, Room Management, Teacher availability) uses shadcn. Decide
-  when/how to migrate the remaining antd components to shadcn, or keep
-  antd for them.
+  (`DeanDashboard`, `TeacherDashboard`, root antd `ConfigProvider`) still use
+  antd, while new UI (the sidebar, Subject Management, Room Management, Teacher
+  availability) uses shadcn. Decide when/how to migrate the remaining antd
+  components to shadcn, or keep antd for them.
 - **Should Course/Year ever become a scheduling constraint?** (spec 07)
   `subjects.courseId` + `subjects.year` are descriptive/organizational only
   in this unit — the CSP does not read them, so two subjects from the same
@@ -2004,6 +2003,21 @@ and the 12-row grid at 7:30 AM and 6:30 PM with an empty first/last slot.
   variable set on `<body>` in the root layout; the Dean sidebar's fixed
   panel spans `top: var(--app-header-height)` → viewport bottom so it
   sits below the sticky white AppHeader instead of overlapping it.
+- The identity that used to live in the root `AppHeader` now lives in the
+  sidebar header: `components/shared/AppSidebarHeader.tsx` renders the shadcn
+  `SidebarHeader` block — school logo (`public/ndkc-logo.png`) plus the
+  "NDKC EduSched" title and a "Class scheduling" subtitle — and hides the text
+  under `group-data-[collapsible=icon]` so a collapsed rail shows the logo
+  alone. `components/shared/AppTopBar.tsx` is the shadcn block's inset header
+  (`SidebarTrigger` + Clerk `UserButton`) shared by `app/dean/layout.tsx` and
+  `app/teacher/layout.tsx`, which used to duplicate that markup. The Clerk
+  `UserButton` + `useUserSync()` pair is isolated in
+  `components/shared/AppUserMenu.tsx` so `/no-role` can render it too (a
+  signed-in user with no role otherwise has no way to sign out). The white
+  `AppHeader`, the `--app-header-height` variable, and the sidebar's
+  `top: var(--app-header-height)` offset are all gone — the sidebar is now
+  full-height from the top of the viewport, which is what shadcn's `Sidebar`
+  does by default. Verified with `tsc`, `lint` (0 errors) and `build`.
 - Subject management queries (`listAll`, `getTeachers`) return a
   `{ ok, data } | { ok: false, error }` Result union instead of throwing,
   so `useSubjects` can surface failed queries to the error state without

@@ -125,7 +125,7 @@ type RandomSource = () => number;
 interface SubjectChoice {
   dayPattern: SchedulingDayPattern;
   option: TimeOption;
-}
+} 
 
 /**
  * A subject's whole gene space, flattened. One gene indexes into `choices`, so

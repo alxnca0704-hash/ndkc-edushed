@@ -47,11 +47,12 @@ rather than writing from scratch.]
 
 ## Layout Patterns
 
-- [Pattern — e.g. Editor: full-viewport split with
-  left sidebar, center canvas, right sidebar]
-- [Pattern — e.g. Sidebars: fixed width with border separator]
-- [Pattern — e.g. Modals: centered overlay with backdrop blur]
-- [Pattern — e.g. Navbar: top bar with bottom border]
+- [Pattern — Sidebars: fixed width with border separator]
+- [Pattern — Identity: shadcn `SidebarHeader` in the sidebar
+  (`components/shared/AppSidebarHeader.tsx`) — logo + "NDKC EduSched" +
+  subtitle, text hidden when the rail collapses to icons. There is no top
+  app bar; the inset header (`components/shared/AppTopBar.tsx`) carries only
+  the `SidebarTrigger` and the Clerk `UserButton`]
 
 ## Icons
 
