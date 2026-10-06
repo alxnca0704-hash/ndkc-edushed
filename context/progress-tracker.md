@@ -1,5 +1,13 @@
 # Progress Tracker
 
+## Latest Change
+
+- **Taskbar redesign (spec 13):** the shared Dean and Teacher sidebar now uses
+  `#072b04` with white labels, a subtle white hover wash, and a white active
+  navigation row with dark green text. The color treatment is tokenized in
+  `app/globals.css` and documented in `ui-context.md`. Existing navigation,
+  identity header, and collapsed icon rail remain in place.
+
 Update this file after every meaningful implementation
 change.
 

@@ -59,7 +59,7 @@ export function AppSidebar({
                         render={<Link href={item.href} />}
                         isActive={isActive}
                         tooltip={item.title}
-                        className="h-9"
+                        className="h-10 rounded-lg px-3 text-sidebar-foreground/85 hover:bg-sidebar-accent hover:text-sidebar-foreground data-active:bg-sidebar-primary data-active:text-sidebar-primary-foreground data-active:hover:bg-sidebar-primary data-active:hover:text-sidebar-primary-foreground"
                       >
                         <item.icon />
                         <span>{item.title}</span>

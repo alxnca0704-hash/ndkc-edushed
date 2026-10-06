@@ -54,6 +54,17 @@ rather than writing from scratch.]
   app bar; the inset header (`components/shared/AppTopBar.tsx`) carries only
   the `SidebarTrigger` and the Clerk `UserButton`]
 
+### Taskbar / Sidebar
+
+The Dean and Teacher taskbars share `components/shared/AppSidebar.tsx` and the
+shadcn Sidebar primitives. The sidebar surface is the deep school green
+`#072b04` in both themes, with white foreground text and a quiet translucent
+white hover surface. The active navigation item is a white rounded row with
+deep green text; inactive items remain white on green. Sidebar colors are
+defined by the `--sidebar*` CSS tokens in `app/globals.css`, not per-link hex
+values. The logo and product name remain in the shared header, and the existing
+icon-rail collapse behavior is preserved.
+
 ## Icons
 
 [e.g. Lucide React. Stroke-based icons only. Sizes:
@@ -165,4 +176,3 @@ two or three rows tall.
 The grid is deliberately inert: no drag, no editing. Manual schedule
 editing is Out of Scope, and conflict validation belongs to the engine,
 so a cell is a readout, not a target.
-
