@@ -3,6 +3,7 @@ import { api } from "./_generated/api";
 import { v } from "convex/values";
 
 import { isDean } from "./roles";
+import { userDisplayName } from "./userNames";
 
 const CLERK_API_URL = "https://api.clerk.com/v1";
 const PAGE_LIMIT = 500;
@@ -135,10 +136,7 @@ export const getTeachers = query({
         ok: true as const,
         data: teachers.map((teacher) => ({
           clerkId: teacher.clerkId,
-          name: [teacher.firstName, teacher.lastName]
-            .filter(Boolean)
-            .join(" ")
-            .trim() || teacher.email,
+          name: userDisplayName(teacher),
         })),
       };
     } catch (error) {

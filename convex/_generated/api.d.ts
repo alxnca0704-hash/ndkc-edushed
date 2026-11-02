@@ -11,6 +11,7 @@
 import type * as availability from "../availability.js";
 import type * as courses from "../courses.js";
 import type * as migrations from "../migrations.js";
+import type * as notifications from "../notifications.js";
 import type * as roles from "../roles.js";
 import type * as rooms from "../rooms.js";
 import type * as schedule from "../schedule.js";
@@ -25,6 +26,7 @@ import type * as scheduling_util from "../scheduling/util.js";
 import type * as scheduling_validate from "../scheduling/validate.js";
 import type * as subjects from "../subjects.js";
 import type * as teachers from "../teachers.js";
+import type * as userNames from "../userNames.js";
 import type * as users from "../users.js";
 
 import type {
@@ -37,6 +39,7 @@ declare const fullApi: ApiFromModules<{
   availability: typeof availability;
   courses: typeof courses;
   migrations: typeof migrations;
+  notifications: typeof notifications;
   roles: typeof roles;
   rooms: typeof rooms;
   schedule: typeof schedule;
@@ -51,6 +54,7 @@ declare const fullApi: ApiFromModules<{
   "scheduling/validate": typeof scheduling_validate;
   subjects: typeof subjects;
   teachers: typeof teachers;
+  userNames: typeof userNames;
   users: typeof users;
 }>;
 

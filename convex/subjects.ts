@@ -7,6 +7,7 @@ import {
   subjectColorTokenForName,
 } from "../constants/subjectColors";
 import { isDean } from "./roles";
+import { userDisplayName } from "./userNames";
 
 const YEAR_LEVELS = v.union(
   v.literal(1),
@@ -30,15 +31,6 @@ const subjectFields = {
    */
   color: v.optional(v.string()),
 };
-
-function teacherDisplayName(doc: {
-  firstName?: string;
-  lastName?: string;
-  email: string;
-}): string {
-  const name = [doc.firstName, doc.lastName].filter(Boolean).join(" ").trim();
-  return name || doc.email;
-}
 
 /**
  * The color to store: the Dean's pick when they made one, the color the doc
@@ -87,7 +79,7 @@ export const listAll = query({
       const teacherByName = new Map(
         teachers.map((teacher) => [
           teacher.clerkId,
-          teacherDisplayName(teacher),
+          userDisplayName(teacher),
         ]),
       );
 

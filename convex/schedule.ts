@@ -21,6 +21,8 @@ import type {
 import { gaGenerate } from "./scheduling/gaGenerate";
 import { repair, type RepairStats } from "./scheduling/repair";
 import { isDean, roleOf } from "./roles";
+import { insertNotification } from "./notifications";
+import { identityDisplayName } from "./userNames";
 import type {
   InfeasibilityReason,
   PlacedSession,
@@ -162,7 +164,15 @@ export const listAvailability = internalQuery({
 });
 
 export const saveGenerated = internalMutation({
-  args: { sessions: v.array(sessionValidator) },
+  args: {
+    sessions: v.array(sessionValidator),
+    /**
+     * Who generated the week, for the notification's body. Optional because the
+     * teacher-facing sentence reads correctly without it ("a new week was
+     * generated for you") — the Dean's name is a nicety, not the fact.
+     */
+    actorName: v.optional(v.string()),
+  },
   handler: async (ctx, args): Promise<number> => {
     const now = Date.now();
     const existing = await ctx.db.query("schedules").collect();
@@ -179,6 +189,42 @@ export const saveGenerated = internalMutation({
         updatedAt: now,
       });
       inserted += 1;
+    }
+
+    // Tell each teacher their week changed. This is the one schedule change the
+    // teacher cannot see happen: they have no page that reports that the Dean
+    // pressed Generate, and the Dean's schedule page is not theirs to watch.
+    //
+    // The recipients are derived from the rows just written rather than from the
+    // subjects table, so a teacher is only told about a week they are actually in
+    // — and one of them being left out of a generation is not something this
+    // function can do. Each teacher gets a single notice for the whole generation
+    // (not one per class), because the event is the regeneration, not the classes.
+    //
+    // Counted per placed session, because that is what this app calls a class:
+    // the same unit `useMySchedule` reports as "N classes this week", so the
+    // notification and the schedule page it sends you to cannot disagree.
+    const classCounts = new Map<string, number>();
+    for (const session of args.sessions) {
+      classCounts.set(
+        session.teacherId,
+        (classCounts.get(session.teacherId) ?? 0) + 1,
+      );
+    }
+
+    for (const [teacherId, classCount] of classCounts) {
+      const classes = `${classCount} ${
+        classCount === 1 ? "class" : "classes"
+      } this week`;
+      await insertNotification(ctx, {
+        recipientId: teacherId,
+        kind: "schedule-generated",
+        title: "Your schedule was updated",
+        body: args.actorName?.trim()
+          ? `${args.actorName.trim()} generated a new week — you have ${classes}.`
+          : `A new week was generated for you — ${classes}.`,
+        createdAt: now,
+      });
     }
 
     return inserted;
@@ -588,7 +634,7 @@ export const generate = action({
 
     const saved: number = await ctx.runMutation(
       internal.schedule.saveGenerated,
-      { sessions },
+      { sessions, actorName: identityDisplayName(identity) },
     );
 
     return { ok: true as const, count: saved, optimization };

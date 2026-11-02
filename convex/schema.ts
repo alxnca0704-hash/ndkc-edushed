@@ -1,10 +1,22 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
+import { NOTIFICATION_KINDS } from "../constants/notifications";
+
 const softConstraintValidator = v.object({
   enabled: v.boolean(),
   weight: v.number(),
 });
+
+/**
+ * Built from the shared tuple rather than written out again, so a kind added in
+ * `constants/notifications.ts` is a kind this table accepts. Convex validates
+ * every write against the schema, so a mismatch here fails loudly on insert
+ * instead of storing a row the UI has no icon for.
+ */
+const notificationKindValidator = v.union(
+  ...NOTIFICATION_KINDS.map((kind) => v.literal(kind)),
+);
 
 export default defineSchema({
   users: defineTable({
@@ -97,4 +109,25 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   }),
+  // One row per notification, addressed to one person by their Clerk `userId`
+  // (Invariant 3 — never by name or email).
+  //
+  // `title` and `body` are stored as finished sentences rather than as fields
+  // the UI composes. A notification is a record of one event ("you have 4
+  // classes" was true of one generation), so re-deriving its words from the
+  // current `schedules` / `availability` rows would rewrite what the reader was
+  // told. `kind` is the only thing the UI branches on — it picks an icon and a
+  // destination — and the two producers that write rows are
+  // `availability.setMine` (to the Dean) and `schedule.saveGenerated` (to the
+  // teachers in the week).
+  //
+  // Unread is "no `readAt`", which is why it is optional.
+  notifications: defineTable({
+    recipientId: v.string(),
+    kind: notificationKindValidator,
+    title: v.string(),
+    body: v.string(),
+    readAt: v.optional(v.number()),
+    createdAt: v.number(),
+  }).index("by_recipientId", ["recipientId"]),
 });

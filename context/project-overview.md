@@ -23,6 +23,9 @@ This is a prototype scheduling application that helps a school Dean generate a c
 8. **Dean:** views the generated schedule as a time grid, loaded live from
    Convex, switching between one course + year level at a time
 9. **Teacher:** views only their own assigned classes in a filtered, read-only schedule, loaded live from Convex
+10. **Notifications:** generating a week tells every teacher it touched, and a
+    teacher changing their availability tells the Dean — each read from the bell
+    in the shared top bar
 
 ## Features
 
@@ -99,6 +102,22 @@ This is a prototype scheduling application that helps a school Dean generate a c
 - Weekly grid where a logged-in teacher marks blocked (unavailable) time slots
 - Saved to Convex, linked to their Clerk user ID
 
+### Notifications (Dean and Teacher)
+
+- In-app only. A notification bell in the shared top bar, for both roles, with
+  an unread count badge — no email, SMS, or push
+- Two flows, one per direction between the two roles:
+  - **Teacher ← Dean:** a teacher is notified when the Dean generates a new
+    week, saying how many classes they now have and linking to their schedule
+  - **Dean ← Teacher:** the Dean is notified when a teacher changes their
+    availability, naming the teacher, how many slots they blocked, and that the
+    schedule needs regenerating
+- A notification records the message **as it was written** (title + body +
+  timestamp + read state) rather than re-deriving it from current data, so what
+  the reader is told is what was true when it happened
+- Read state is per user, resolved from the caller's own identity — one user can
+  never read or mark another user's notifications
+
 ### My Schedule (Teacher)
 
 - Read-only time grid showing only the subjects/sessions assigned to the logged-in teacher
@@ -125,6 +144,8 @@ This is a prototype scheduling application that helps a school Dean generate a c
   Dean-configurable soft-constraint weights (Balance Workload / Spread
   Sessions Across Days / Minimize Gaps), skipped when no soft constraint is
   enabled
+- In-app notifications between Dean and Teachers (new schedule generated →
+  Teachers; availability changed → Dean), read from a bell in the shared top bar
 - Ant Design–based UI and layout
 
 ### Out of Scope
@@ -133,7 +154,10 @@ This is a prototype scheduling application that helps a school Dean generate a c
 - Admin role and in-app account creation
 - Full-strength CSP/GA optimization (can start with a simpler valid-schedule algorithm, running either in a Convex action or an external Python service, and upgrade later)
 - Manual drag-and-drop schedule editing
-- Publishing, versioning, notifications, and analytics
+- Publishing, versioning, and analytics
+- Notification channels other than in-app (email, SMS, push), notification
+  preferences, digests, and any notification history beyond the latest few
+  shown in the bell
 - Teacher change requests and conflict flagging
 - Re-running the optimizer on every manual schedule adjustment (there is no
   manual adjustment yet — see Out of Scope above)

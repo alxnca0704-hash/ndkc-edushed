@@ -52,7 +52,29 @@ rather than writing from scratch.]
   (`components/shared/AppSidebarHeader.tsx`) — logo + "NDKC EduSched" +
   subtitle, text hidden when the rail collapses to icons. There is no top
   app bar; the inset header (`components/shared/AppTopBar.tsx`) carries only
-  the `SidebarTrigger` and the Clerk `UserButton`]
+  the `SidebarTrigger`, the notification bell, and the Clerk `UserButton`]
+
+### Notification Bell
+
+`components/notifications/NotificationBell.tsx`, rendered in the shared top bar
+next to the account menu so both role dashboards get it for free. A ghost
+`size="icon"` button holding a Lucide `Bell`, with the unread count as a small
+filled `primary` circle pinned to its corner (`99+` above the cap) — the badge is
+`aria-hidden` and the count lives in the trigger's `aria-label`, so the state is
+announced once and not twice. Opening it is a shadcn `Popover` (`align="end"`,
+`w-80 sm:w-96`) holding `NotificationList`.
+
+Rows are the notification's own icon in a tinted square, its title, a muted
+relative timestamp (`formatRelativeTime`), and its body; unread rows carry
+`bg-muted/60` plus a semibold title and a trailing dot. The header is a small
+muted "Notifications" label and a ghost "Mark all read" button, disabled when
+nothing is unread rather than rendered inert. Each kind picks its icon and its
+destination from one `Record<kind, …>` — `CalendarClock` to the teacher's own
+schedule (same tab), `CalendarRange` to the Dean's schedule (new tab) — so the
+list cannot route a notification somewhere its reader cannot act. The popover
+carries the feature's three states like any page region: `NotificationListSkeleton`
+while loading, the shared `EmptyState` at zero, the shared `ErrorState` on
+failure (its retry reloads, matching every other retry in the app).
 
 ### Taskbar / Sidebar
 
