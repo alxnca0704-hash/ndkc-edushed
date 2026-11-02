@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is a prototype scheduling application that helps a school Dean generate a conflict-free class timetable automatically instead of building it by hand. The Dean enters the rooms available and the subjects that need to be scheduled (including how long and how often each meets, and who teaches it), while Teachers log in and set the times they are unavailable. Authentication is handled by Clerk, with Dean and Teacher accounts seeded manually ahead of time rather than through a public sign-up flow. Data (Rooms, Subjects, Availability, Schedules) is stored and synced in real time using Convex. A scheduling algorithm (Constraint Satisfaction) then assigns each subject a day, time, and room with no double-booked teachers or rooms, and — when the Dean has switched on any soft constraint — a Genetic Algorithm pass then polishes that schedule against those preferences, never breaking a hard rule.
+This is a prototype scheduling application that helps a school Dean generate a conflict-free class timetable automatically instead of building it by hand. The Dean enters the rooms available and the subjects that need to be scheduled (including how long and how often each meets, and who teaches it), while Teachers log in and set the times they are unavailable. Authentication is handled by Clerk, with one Admin account and Dean and Teacher accounts seeded manually ahead of time rather than through a public sign-up flow. Data (Rooms, Subjects, Availability, Schedules) is stored and synced in real time using Convex. A scheduling algorithm (Constraint Satisfaction) then assigns each subject a day, time, and room with no double-booked teachers or rooms, and — when the Dean has switched on any soft constraint — a Genetic Algorithm pass then polishes that schedule against those preferences, never breaking a hard rule.
 
 ## Goals
 
@@ -13,8 +13,8 @@ This is a prototype scheduling application that helps a school Dean generate a c
 
 ## Core User Flow
 
-1. Dean or Teacher logs in with a Clerk account that was seeded ahead of time (no self-registration)
-2. User is routed to their dashboard based on their role (Dean or Teacher), set via Clerk metadata
+1. Admin, Dean, or Teacher logs in with a Clerk account that was seeded ahead of time (no self-registration)
+2. User is routed to their dashboard based on their role (Admin, Dean, or Teacher), set via Clerk metadata
 3. **Dean:** adds Rooms (name, type) — saved to Convex
 4. **Dean:** adds Subjects (name, duration, assigned course + year level, assigned teacher + room — pulled from seeded Clerk teacher accounts, the courses table, and the rooms table) — saved to Convex
 5. **Teacher:** logs in and marks unavailable days/times — saved to Convex, linked to their Clerk user ID
@@ -31,9 +31,14 @@ This is a prototype scheduling application that helps a school Dean generate a c
 
 ### Authentication (Clerk, seeded accounts)
 
-- Dean and Teacher accounts are created manually in Clerk ahead of time — no public sign-up page
-- Role (Dean/Teacher) is stored in Clerk user metadata and used to route each user to the correct dashboard
+- Admin, Dean, and Teacher accounts are created manually in Clerk ahead of time — no public sign-up page
+- Role (Admin/Dean/Teacher) is stored in Clerk user metadata and used to route each user to the correct dashboard
 - Clerk user ID is used as the link between a logged-in Teacher and their Convex records (availability, assigned schedule)
+
+### Admin Home
+
+- One seeded Admin role has a protected `/admin` home and sidebar shell
+- The page is a placeholder for future administration tools; account management and other admin operations are not included
 
 ### Data Layer (Convex)
 
@@ -131,8 +136,9 @@ This is a prototype scheduling application that helps a school Dean generate a c
 
 ### In Scope
 
-- Clerk authentication with manually seeded Dean and Teacher accounts
-- Role-based routing (Dean vs Teacher dashboard)
+- Clerk authentication with a manually seeded Admin account plus seeded Dean and Teacher accounts
+- Role-based routing for Admin, Dean, and Teacher dashboards
+- Protected Admin home placeholder; account management and admin operations remain out of scope
 - Convex-backed data storage for Rooms, Courses, Subjects, Availability, and Schedules
 - Dean-side Room CRUD
 - Dean-side Course CRUD
@@ -151,7 +157,7 @@ This is a prototype scheduling application that helps a school Dean generate a c
 ### Out of Scope
 
 - Public sign-up / self-registration
-- Admin role and in-app account creation
+- Admin account management and in-app account creation
 - Full-strength CSP/GA optimization (can start with a simpler valid-schedule algorithm, running either in a Convex action or an external Python service, and upgrade later)
 - Manual drag-and-drop schedule editing
 - Publishing, versioning, and analytics

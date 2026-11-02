@@ -28,6 +28,9 @@ export async function redirectForRoleHome(): Promise<void> {
   if (role === ROLES.teacher) {
     redirect(APP_ROUTES.teacher);
   }
+  if (role === ROLES.admin) {
+    redirect(APP_ROUTES.admin);
+  }
   redirect(APP_ROUTES.noRole);
 }
 
@@ -43,7 +46,9 @@ export async function requireRole(role: Role): Promise<CurrentUser> {
         ? APP_ROUTES.dean
         : user.role === ROLES.teacher
           ? APP_ROUTES.teacher
-          : APP_ROUTES.noRole,
+          : user.role === ROLES.admin
+            ? APP_ROUTES.admin
+            : APP_ROUTES.noRole,
     );
   }
 

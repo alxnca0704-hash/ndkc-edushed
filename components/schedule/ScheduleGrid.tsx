@@ -8,7 +8,6 @@ import {
 } from "@/components/ui/tooltip";
 import { formatClock } from "@/constants/availability";
 import { scheduleGridBlockWidth, scheduleGridTracks } from "@/lib/schedule";
-import { subjectPaletteClasses } from "@/lib/subject-colors";
 import { cn } from "@/lib/utils";
 import type {
   ScheduleGrid as ScheduleGridModel,
@@ -40,15 +39,9 @@ function ariaLabel(block: ScheduleGridBlock): string {
  * constraint means two different courses (or years) at once; a week with no
  * overlaps is simply two equal columns.
  *
- * Blocks are colored by **subject**, not by teacher and not by a flat green: the
- * palette is the schedule's one identity system, and a subject's color is the
- * same token on the Dean's card and the Teacher's, because both read the one
- * `subjectColor` field the generated row already carries. The cards are lifted
- * off the column with a shadow, so a card keeps a readable edge against whatever
- * color it is without a border around every cell, and the day-pair wash and hour
- * rules behind them stay neutral so they never compete with the colors they sit
- * under. The legend in `SubjectColorLegend` is the key, and the subject name is
- * printed on the card and in the tooltip, so color is never the only channel.
+ * Blocks use a neutral card surface and readable labels. The day-pair wash and
+ * hour rules carry the grid structure without assigning visual colors to
+ * subjects, so the Dean and Teacher views stay consistent and easy to scan.
  *
  * The header, the three background layers and the body are one grid, not
  * several stacked ones, so a time label cannot drift out of line with the
@@ -148,10 +141,6 @@ export function ScheduleGrid({ grid, className }: ScheduleGridProps) {
                 // One lane per block; only a block alone in its cluster takes
                 // its day pair's full width. See `scheduleGridBlockWidth`.
                 const width = scheduleGridBlockWidth(block, laneCount);
-                // One lookup per block, off the same token the legend reads, so a
-                // card and its swatch cannot disagree.
-                const palette = subjectPaletteClasses(block.subjectColor);
-
                 return (
                   <Tooltip key={block.key}>
                     <TooltipTrigger
@@ -164,17 +153,14 @@ export function ScheduleGrid({ grid, className }: ScheduleGridProps) {
                       aria-label={ariaLabel(block)}
                       className={cn(
                         "m-1 flex flex-col items-start gap-0.5 overflow-hidden rounded-lg p-1.5 text-left shadow-sm transition-shadow hover:shadow-md",
-                        palette.card,
+                        "bg-schedule-card text-card-foreground",
                       )}
                     >
                       <span className="truncate text-xs font-medium sm:text-sm">
                         {block.subjectName}
                       </span>
                       <span
-                        className={cn(
-                          "truncate text-[0.6875rem] sm:text-xs",
-                          palette.muted,
-                        )}
+                        className="truncate text-[0.6875rem] text-muted-foreground sm:text-xs"
                       >
                         {block.teacherName}
                       </span>
@@ -183,10 +169,7 @@ export function ScheduleGrid({ grid, className }: ScheduleGridProps) {
                           than clipped to a sliver. Taller blocks show it. */}
                       {block.span > 1 ? (
                         <span
-                          className={cn(
-                            "truncate text-[0.6875rem] sm:text-xs",
-                            palette.muted,
-                          )}
+                          className="truncate text-[0.6875rem] text-muted-foreground sm:text-xs"
                         >
                           {block.roomName}
                         </span>

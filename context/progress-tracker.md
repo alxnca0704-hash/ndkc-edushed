@@ -2,87 +2,44 @@
 
 ## Latest Change
 
-- **Taskbar redesign (spec 13):** the shared Dean and Teacher sidebar now uses
-  `#072b04` with white labels, a subtle white hover wash, and a white active
-  navigation row with dark green text. The color treatment is tokenized in
-  `app/globals.css` and documented in `ui-context.md`. Existing navigation,
-  identity header, and collapsed icon rail remain in place.
-
-Update this file after every meaningful implementation
-change.
+- **Admin account and home:** added the `admin` Clerk role, routed it to
+  `/admin`, and created a protected placeholder home with the shared sidebar and
+  top bar. The Clerk account for `carbonellalex955@gmail.com` was created with
+  Admin public metadata. The repeatable seed script supports `SEED_ADMIN_EMAIL`
+  and optional `SEED_ADMIN_PASSWORD`; the initial password is in `.env.local`.
+  Convex schema was pushed to the configured dev deployment so the Admin role
+  can sync. Admin management capabilities remain out of scope.
+- **Dean schedule table redesign (spec 15):** `/dean/schedule` now renders a
+  responsive shadcn table with one row per linked class pair and day pair, time,
+  subject, teacher, and room columns. `/teacher/schedule` uses the same table,
+  scoped to the signed-in teacher's own rows. The subject color picker and
+  subject-list color markers are removed. Both schedule views use neutral table
+  rows without subject color cards or legends. Existing color fields remain in
+  Convex only for legacy document compatibility; schedule views ignore them.
+- **Teacher schedule filters:** `/teacher/schedule` now filters the signed-in
+  teacher's table by day pair, scheduled time, and room, with live search across
+  subject, teacher, room, and course. The toolbar exposes available options from
+  that teacher's own generated sessions, supports clearing all filters, and
+  keeps the table summary in sync with the visible class count.
 
 ## Current Phase
 
-Complete — the schedule is a grid rather than a table, for both roles
-(spec 12), it has a fourth hard constraint, and its cards are now **colored by
-subject**. `/dean/schedule` and `/teacher/schedule` render the same
-`ScheduleGrid`: exactly two columns (MW — Mon & Wed, then TTh — Tue & Thu) and
-one row per `AVAILABILITY_TIME_SLOTS` entry (12 rows, 7:30 AM to 6:30 PM), with a
-class spanning the rows it occupies. All the geometry lives in one pure
-function, `buildScheduleGrid` in `lib/schedule.ts`, so the two pages cannot
-drift and the shape is testable without a browser. The four old table components
-(Dean's and the Teacher's, plus their skeletons) are gone, and `ui-context.md`
-records the grid and its colors.
-
-The three follow-up units after spec 12 were: a visual pass on the grid (lane
-geometry, tooltip, density); the **course/year hard constraint** — two subjects
-sharing both `courseId` and `year` can never be in a lesson at the same time;
-and the **uniform box matrix**, so MW and TTh are always the same width. A
-final pass made the grid *visible* (a neutral `bg-card` block on a white page
-was effectively invisible) by washing the day pairs, ruling the hours and
-lifting the cards off the page with a shadow.
-
-The last pass then made the color mean something: **every card is painted in its
-subject's color**, from a ten-slot muted palette (`constants/subjectColors.ts`),
-with a legend above both grids. That pass removed the flat green and the
-per-teacher palette together, and neutralized `--schedule-column` /
-`--schedule-rule` — because once a card's color means "subject," a green
-day-pair wash behind it reads as a second subject. See Completed for the storage
-and migration story. Verified with `tsc`, `lint`, `build`, the engine smoke test
-(111 assertions) and `scripts/schedule-grid-smoke-test.ts` (76 assertions).
-Browser verification is still outstanding — see Next Up.
-
-The **engine** has since been rewired to the thesis's algorithm ordering, and the
-app now runs it. `gaGenerate.ts` builds the whole week from a blank slate, and
-`repair.ts` fixes one broken class automatically on hard constraints only.
-`convex/schedule.ts`'s `generate` calls `gaGenerate` directly and no longer runs a
-CSP first; the old `runCSP` and `runGA` entry points have been deleted, leaving
-`csp.ts` (domain construction) and `ga.ts` (penalty measurement) as the shared
-layers both searches read. Saving availability on `/teacher/availability` now
-triggers the repair automatically — see Completed ("thesis workflow, live").
+Complete for spec 15. Dean and Teacher can scan scheduled meetings in the same
+simple table; the Teacher view is scoped to their own schedule. Empty, loading,
+and error behavior and schedule generation controls remain in the existing page
+flow. Paired MW/TTh records render once. Teacher names resolve from teacher user
+records, so Clerk IDs do not leak into the table. The subject form no longer
+offers color selection, and color is not used to identify a subject in either
+schedule view.
 
 ## Current Goal
 
-Shipped (see Completed). Remaining follow-up: eyeball it in the browser.
-Nothing is visible from the command line that matters most here, and four
-things in particular can't be proven by the type checker or a smoke test:
-- **The ten hues together.** The palette was chosen as ten muted triples from the
-  app's own token families, not by looking at them side by side. Check that no
-  two slots are hard to tell apart at card size (a 7rem × 3.5rem block), in
-  **both** light and dark mode, and that `--color-subject-*-muted` (the teacher
-  and room lines) stays legible on its own `--color-subject-*-surface`.
-- **Overlapping classes.** The dev week has no overlap (one teacher owns all
-  four labs, and the CSP forbids them double-booking), so the sub-column
-  split — the part most likely to look wrong — has never rendered. Force it by
-  giving two subjects *different* teachers at the same time in different rooms
-  and same-year, and regenerating. (Same `courseId` + `year` can no longer
-  overlap at all — that is the hard constraint.) Two subjects on **different**
-  years overlapping in time is the case the palette exists for; two blocks in
-  one lane, in two different colors, is exactly what needs to look right.
-- **The picker.** Open the Subject form on `/dean/subjects` and check the
-  popover: the swatch on the trigger follows the name until a color is picked,
-  the picked swatch gets a ring, and a name hash change doesn't make the
-  preview jump around. Then create a subject, pick a color, generate, and confirm
-  the card on both `/dean/schedule` and `/teacher/schedule` is that color and
-  the legend lists it.
-- **Card density.** A 60-minute class is 3.5rem tall and shows subject +
-  teacher only; the room is in the tooltip. A 2-hour class shows all three
-  lines. Check the 1-line-to-3-line transition doesn't look accidental.
-
-Also worth a look: the legend wrapping to two lines in the Dean's Course + Year
-view (four to five subjects), a 3-hour class's text at the narrow mobile width,
-and the 12-row grid at 7:30 AM and 6:30 PM with an empty first/last slot.
-
+Browser verification is still outstanding. Check both schedule tables at desktop
+and mobile widths, confirm each linked class pair appears once, and confirm
+teacher names display correctly. Confirm the subject form and schedule pages
+show no color picker, legend, or color markers. On the Teacher page, verify the
+day, time, room, and search filters combine correctly and the no-results state
+offers a clear path back to the full schedule.
 
 ## Completed
 

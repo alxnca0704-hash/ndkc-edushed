@@ -1,10 +1,12 @@
 "use client";
 
-import { CalendarRange } from "lucide-react";
+import { CalendarRange, Search } from "lucide-react";
 
-import { ScheduleGrid } from "@/components/schedule/ScheduleGrid";
-import { ScheduleGridSkeleton } from "@/components/schedule/ScheduleGridSkeleton";
-import { SubjectColorLegend } from "@/components/schedule/SubjectColorLegend";
+import {
+  ScheduleTable,
+  ScheduleTableSkeleton,
+} from "@/components/schedule/ScheduleTable";
+import { MyScheduleFilters } from "@/components/schedule/MyScheduleFilters";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { ErrorState } from "@/components/shared/ErrorState";
 import { useMySchedule } from "@/hooks/useMySchedule";
@@ -13,12 +15,23 @@ import { useMySchedule } from "@/hooks/useMySchedule";
  * Read-only "My Schedule" view: only the signed-in teacher's own sessions,
  * arranged by time and day pair. Editing is Dean-only, so there are no actions
  * here — the empty state tells the teacher who to wait for instead of offering
- * a button they can't use. The legend lists only this teacher's own subjects,
- * because the grid it sits above is built from the same rows.
+ * a button they can't use. It uses the same responsive table as the Dean view,
+ * scoped to the signed-in teacher's own generated rows.
  */
 export function MySchedulePage() {
   const {
-    grid,
+    filteredSessions,
+    filteredClassCount,
+    filters,
+    dayOptions,
+    timeOptions,
+    roomOptions,
+    hasActiveFilters,
+    setSearch,
+    setDay,
+    setTime,
+    setRoom,
+    clearFilters,
     subjectCount,
     classCount,
     isLoading,
@@ -32,7 +45,7 @@ export function MySchedulePage() {
 
   const renderContent = () => {
     if (isLoading) {
-      return <ScheduleGridSkeleton />;
+      return <ScheduleTableSkeleton />;
     }
 
     if (error) {
@@ -55,10 +68,50 @@ export function MySchedulePage() {
       );
     }
 
+    if (filteredSessions.length === 0) {
+      return (
+        <div className="flex flex-col gap-4">
+          <MyScheduleFilters
+            filters={filters}
+            dayOptions={dayOptions}
+            timeOptions={timeOptions}
+            roomOptions={roomOptions}
+            hasActiveFilters={hasActiveFilters}
+            onSearchChange={setSearch}
+            onDayChange={setDay}
+            onTimeChange={setTime}
+            onRoomChange={setRoom}
+            onClear={clearFilters}
+          />
+          <EmptyState
+            icon={Search}
+            title="No matching classes"
+            description="Try another search or change your filters."
+          />
+        </div>
+      );
+    }
+
     return (
-      <div className="flex flex-col gap-3">
-        <SubjectColorLegend subjects={grid.subjects} />
-        <ScheduleGrid grid={grid} />
+      <div className="flex flex-col gap-4">
+        {hasActiveFilters ? (
+          <p className="text-sm text-muted-foreground">
+            Showing {filteredClassCount} of {classCount} classes this week.
+          </p>
+        ) : null}
+        <MyScheduleFilters
+          filters={filters}
+          dayOptions={dayOptions}
+          timeOptions={timeOptions}
+          roomOptions={roomOptions}
+          hasActiveFilters={hasActiveFilters}
+          onSearchChange={setSearch}
+          onDayChange={setDay}
+          onTimeChange={setTime}
+          onRoomChange={setRoom}
+          onClear={clearFilters}
+        />
+        <ScheduleTable sessions={filteredSessions} />
       </div>
     );
   };

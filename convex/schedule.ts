@@ -22,7 +22,7 @@ import { gaGenerate } from "./scheduling/gaGenerate";
 import { repair, type RepairStats } from "./scheduling/repair";
 import { isDean, roleOf } from "./roles";
 import { insertNotification } from "./notifications";
-import { identityDisplayName } from "./userNames";
+import { identityDisplayName, userDisplayName } from "./userNames";
 import type {
   InfeasibilityReason,
   PlacedSession,
@@ -242,8 +242,21 @@ export const listAll = query({
       }
 
       const sessions = await ctx.db.query("schedules").order("asc").collect();
+      const teachers = await ctx.db
+        .query("users")
+        .withIndex("by_role", (q) => q.eq("role", "teacher"))
+        .collect();
+      const teacherNames = new Map(
+        teachers.map((teacher) => [teacher.clerkId, userDisplayName(teacher)]),
+      );
 
-      return { ok: true as const, data: sessions.map(asSession) };
+      return {
+        ok: true as const,
+        data: sessions.map((session) => ({
+          ...asSession(session),
+          teacherName: teacherNames.get(session.teacherId) ?? "Teacher",
+        })),
+      };
     } catch (error) {
       return { ok: false as const, error: toErrorString(error) };
     }
@@ -272,8 +285,21 @@ export const listMine = query({
         .query("schedules")
         .withIndex("by_teacherId", (q) => q.eq("teacherId", identity.subject))
         .collect();
+      const teachers = await ctx.db
+        .query("users")
+        .withIndex("by_role", (q) => q.eq("role", "teacher"))
+        .collect();
+      const teacherNames = new Map(
+        teachers.map((teacher) => [teacher.clerkId, userDisplayName(teacher)]),
+      );
 
-      return { ok: true as const, data: sessions.map(asSession) };
+      return {
+        ok: true as const,
+        data: sessions.map((session) => ({
+          ...asSession(session),
+          teacherName: teacherNames.get(session.teacherId) ?? "Teacher",
+        })),
+      };
     } catch (error) {
       return { ok: false as const, error: toErrorString(error) };
     }
@@ -456,7 +482,14 @@ export const repairAfterAvailabilityChange = internalMutation({
 
     const subjectDocs = await ctx.db.query("subjects").collect();
     const courseDocs = await ctx.db.query("courses").collect();
+    const teacherDocs = await ctx.db
+      .query("users")
+      .withIndex("by_role", (q) => q.eq("role", "teacher"))
+      .collect();
     const courseById = new Map(courseDocs.map((course) => [course._id, course]));
+    const teacherNameById = new Map(
+      teacherDocs.map((teacher) => [teacher.clerkId, userDisplayName(teacher)]),
+    );
     const roomTypeById = new Map(rooms.map((room) => [room._id, room.type]));
     const subjects: SubjectRow[] = subjectDocs.map((subject) => {
       const course = courseById.get(subject.courseId);
@@ -471,7 +504,7 @@ export const repairAfterAvailabilityChange = internalMutation({
         courseName: course?.name ?? "",
         year: subject.year,
         teacherId: subject.teacherId,
-        teacherName: subject.teacherId,
+        teacherName: teacherNameById.get(subject.teacherId) ?? "Teacher",
         color: subject.color,
       };
     });

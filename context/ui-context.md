@@ -111,7 +111,7 @@ built by `buildScheduleGrid` in `lib/schedule.ts` and rendered by
 | Row rule        | `border-t border-schedule-rule/70` per row, painted under the blocks. Without it an empty hour is indistinguishable from the next one |
 | Time gutter     | `TIME_GUTTER` (`3.25rem`) leading column, shared by header and body so they line up |
 | Lane width      | `LANE_MIN` (`7rem`) floor; a 2-lane column is two of these, an unsplit one is one wider `1fr` track |
-| Class card      | `bg-subject-*-surface` from the subject's palette slot, with `shadow-sm`, `shadow-md` on hover |
+| Class card      | Neutral `bg-schedule-card` surface with `shadow-sm`, `shadow-md` on hover |
 | Card padding    | `p-1.5` — tight, because the row height is sized to the content, not the other way round |
 | Card contents   | Subject + teacher always; the room line renders only when `block.span > 1`, so a 60-minute class never clips. The tooltip and `aria-label` always carry the full detail |
 | Empty cell      | Nothing — no card, no placeholder, no "N/A". The day-pair wash and the row rule carry the structure |
@@ -137,64 +137,16 @@ pair's full width.
 A week with no overlaps — the normal case, and the dev data — is therefore just
 two equal columns of boxes.
 
-## Schedule Colors
+## Schedule Display
 
-The timetable is the one place on the page where color **carries meaning**, and
-what it means is **the subject**. A class card is painted in its subject's
-color, so a Dean's week and a Teacher's week read as the same set of subjects at
-a glance, and the two views can never disagree — both read the one
-`subjectColor` field the generated `schedules` row already carries.
-
-**The palette is ten muted slots, stored as token names, never hex.**
-
-| Token              | | Token               | |
-| ------------------ |-| ------------------- | -|
-| `subject-green`    | | `subject-violet`   | |
-| `subject-olive`    | | `subject-indigo`   | |
-| `subject-amber`    | | `subject-sky`      | |
-| `subject-rose`     | | `subject-teal`     | |
-| `subject-magenta`  | | `subject-slate`    | |
-
-Each slot is a **triple**, not one flat color, and each part has a light and a
-dark value in `app/globals.css`, registered in `@theme inline`:
-
-| Token                              | Role                                       |
-| ---------------------------------- | ------------------------------------------ |
-| `--color-subject-*-surface`        | The class card background — the wash       |
-| `--color-subject-*-foreground`     | The subject name on the card               |
-| `--color-subject-*-muted`          | The teacher and room lines, and the dot    |
-
-Use them through `subjectPaletteClasses(token)` in `lib/subject-colors.ts`,
-which returns `{ card, muted, dot }` as **complete literal class strings** so
-Tailwind can see them. Never interpolate a class name from the token.
-
-**Every color on a schedule card means "subject."** The structure around the
-cards is neutral, on purpose: `--schedule-column` and `--schedule-rule` are
-greys, not a green wash, because a colored column behind colored cards gave two
-things the same visual weight and made a green day-pair look like a subject.
-
-**Legend.** `components/schedule/SubjectColorLegend.tsx` renders
-`ScheduleGrid.subjects` — one swatch + name + class count per subject, sorted by
-name. Both pages render it above the grid and both feed it the same field, so a
-swatch cannot drift from the cards. The subject name is always printed beside
-the swatch, and on the card itself, so color is never the only channel. The
-Dean's copy lists the subjects in the selected Course + Year and the Teacher's
-lists their own, because each hook builds its grid from only the sessions that
-view may see.
-
-**Choosing a color.** The Subject form has a `Popover` of the ten swatches.
-Until the Dean picks one, the swatch follows `subjectColorTokenForName(name)` —
-an FNV-1a hash of the trimmed, case-folded name — which is the *same* hash the
-create mutation applies, so the preview is what will be stored. Editing a subject
-keeps its stored color. A name that hashes to a slot another subject already
-holds is fine: the colors are chosen to be separable, and the legend and the
-picker make an identical pair harmless rather than pretending it doesn't happen.
-
-**Cards are separated by shadow, not by border.** `shadow-sm` normally and
-`shadow-md` on hover: it is one declaration instead of a border color that has to
-stay legible against ten different surfaces, and it survives a card growing to
-two or three rows tall.
-
-The grid is deliberately inert: no drag, no editing. Manual schedule
-editing is Out of Scope, and conflict validation belongs to the engine,
-so a cell is a readout, not a target.
+Both schedule views use neutral class surfaces. Subject, teacher, room, day, and
+time are communicated as text. Subject color selection and color markers are
+removed.
+Both `/dean/schedule` and `/teacher/schedule` use the shadcn Table primitives
+with one row per linked class pair and columns for day pair, time, subject,
+teacher, and room. The Teacher view is scoped to the signed-in teacher's own
+schedule, with labeled filters for day pair, scheduled time, and room plus a
+search field for subject, teacher, room, and course. Filter options come from
+the teacher's generated sessions, and clearing filters restores the full table.
+Subject color fields remain only as legacy storage compatibility; the views do
+not read or display them.

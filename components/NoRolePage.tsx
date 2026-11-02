@@ -15,7 +15,7 @@ export function NoRolePage() {
         <Result
           status="info"
           title="No role assigned"
-          subTitle="Your account has no assigned role yet. Please contact your administrator to be granted Dean or Teacher access."
+          subTitle="Your account has no assigned role yet. Please contact your administrator for access."
           extra={
             <Button type="primary" href={APP_ROUTES.home}>
               Go home

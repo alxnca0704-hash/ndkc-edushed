@@ -5,12 +5,13 @@ import { CalendarClock, Loader2, SlidersHorizontal, WandSparkles } from "lucide-
 import { toast } from "sonner";
 
 import { ScheduleGenerationError } from "@/components/schedule/ScheduleGenerationError";
-import { ScheduleGrid } from "@/components/schedule/ScheduleGrid";
-import { ScheduleGridSkeleton } from "@/components/schedule/ScheduleGridSkeleton";
+import {
+  ScheduleTable,
+  ScheduleTableSkeleton,
+} from "@/components/schedule/ScheduleTable";
 import { ScheduleGroupSelector } from "@/components/schedule/ScheduleGroupSelector";
 import { ScheduleGroupSelectorSkeleton } from "@/components/schedule/ScheduleGroupSelectorSkeleton";
 import { SoftConstraintSettings } from "@/components/schedule/SoftConstraintSettings";
-import { SubjectColorLegend } from "@/components/schedule/SubjectColorLegend";
 import { EmptyState } from "@/components/shared/EmptyState";
 import { ErrorState } from "@/components/shared/ErrorState";
 import { Badge } from "@/components/ui/badge";
@@ -68,7 +69,7 @@ export function SchedulePage() {
 
   const renderContent = () => {
     if (isLoading) {
-      return <ScheduleGridSkeleton />;
+      return <ScheduleTableSkeleton />;
     }
 
     if (error) {
@@ -164,10 +165,7 @@ export function SchedulePage() {
     }
 
     return (
-      <div className="flex flex-col gap-3">
-        <SubjectColorLegend subjects={grid.subjects} />
-        <ScheduleGrid grid={grid} />
-      </div>
+      <ScheduleTable sessions={activeSessions} />
     );
   };
 

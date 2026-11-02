@@ -2,6 +2,7 @@ export const APP_ROUTES = {
   home: "/",
   signIn: "/sign-in",
   noRole: "/no-role",
+  admin: "/admin",
   dean: "/dean",
   deanRooms: "/dean/rooms",
   deanSubjects: "/dean/subjects",
