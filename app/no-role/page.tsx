@@ -16,6 +16,9 @@ export default async function NoRoleRoute() {
   if (role === ROLES.teacher) {
     redirect(APP_ROUTES.teacher);
   }
+  if (role === ROLES.admin) {
+    redirect(APP_ROUTES.admin);
+  }
 
   return <NoRolePage />;
 }

@@ -2,7 +2,8 @@ import { action, mutation, query } from "./_generated/server";
 import { api } from "./_generated/api";
 import { v } from "convex/values";
 
-import { isDean } from "./roles";
+import { roleOf } from "./roles";
+import { userDisplayName } from "./userNames";
 
 const CLERK_API_URL = "https://api.clerk.com/v1";
 const PAGE_LIMIT = 500;
@@ -15,6 +16,12 @@ interface ClerkUser {
   public_metadata: { role?: string } | null;
 }
 
+function toErrorString(error: unknown): string {
+  return error instanceof Error && error.message
+    ? error.message
+    : "Something went wrong";
+}
+
 export const upsertTeacher = mutation({
   args: {
     clerkId: v.string(),
@@ -25,7 +32,24 @@ export const upsertTeacher = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
 
-    if (!isDean(identity)) {
+    if (!identity) {
+      throw new Error("Unauthorized");
+    }
+
+    const roleFromJwt = roleOf(identity);
+    let isAuthorized = roleFromJwt === "dean" || roleFromJwt === "admin";
+
+    if (!isAuthorized) {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_clerkId", (q) => q.eq("clerkId", identity.subject))
+        .unique();
+      if (user?.role === "dean" || user?.role === "admin") {
+        isAuthorized = true;
+      }
+    }
+
+    if (!isAuthorized) {
       throw new Error("Unauthorized");
     }
 
@@ -63,7 +87,22 @@ export const syncFromClerk = action({
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
 
-    if (!isDean(identity)) {
+    if (!identity) {
+      throw new Error("Unauthorized");
+    }
+
+    const roleFromJwt = roleOf(identity);
+    let isAuthorized = roleFromJwt === "dean" || roleFromJwt === "admin";
+
+    if (!isAuthorized) {
+      // Fallback: check database if Clerk session token hasn't refreshed yet
+      const user = await ctx.runQuery(api.users.getCurrentUser, {});
+      if (user?.role === "dean" || user?.role === "admin") {
+        isAuthorized = true;
+      }
+    }
+
+    if (!isAuthorized) {
       throw new Error("Unauthorized");
     }
 
@@ -122,7 +161,24 @@ export const getTeachers = query({
     try {
       const identity = await ctx.auth.getUserIdentity();
 
-      if (!isDean(identity)) {
+      if (!identity) {
+        return { ok: true as const, data: [] };
+      }
+
+      const roleFromJwt = roleOf(identity);
+      let isAuthorized = roleFromJwt === "dean" || roleFromJwt === "admin";
+
+      if (!isAuthorized) {
+        const user = await ctx.db
+          .query("users")
+          .withIndex("by_clerkId", (q) => q.eq("clerkId", identity.subject))
+          .unique();
+        if (user?.role === "dean" || user?.role === "admin") {
+          isAuthorized = true;
+        }
+      }
+
+      if (!isAuthorized) {
         return { ok: true as const, data: [] };
       }
 
@@ -135,10 +191,7 @@ export const getTeachers = query({
         ok: true as const,
         data: teachers.map((teacher) => ({
           clerkId: teacher.clerkId,
-          name: [teacher.firstName, teacher.lastName]
-            .filter(Boolean)
-            .join(" ")
-            .trim() || teacher.email,
+          name: userDisplayName(teacher),
         })),
       };
     } catch (error) {
@@ -146,9 +199,3 @@ export const getTeachers = query({
     }
   },
 });
-
-function toErrorString(error: unknown): string {
-  return error instanceof Error && error.message
-    ? error.message
-    : "Something went wrong";
-}

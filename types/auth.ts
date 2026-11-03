@@ -1,4 +1,4 @@
-export type Role = "dean" | "teacher";
+export type Role = "admin" | "dean" | "teacher";
 
 export interface SessionClaimsMetadata {
   role?: Role;

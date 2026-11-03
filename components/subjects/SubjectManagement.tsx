@@ -19,7 +19,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ROOM_TYPE_LABELS } from "@/constants/subjects";
+import { SUBJECT_YEAR_LEVEL_LABELS } from "@/constants/courses";
+import { ROOM_TYPE_LABELS } from "@/constants/rooms";
 import { useSubjects } from "@/hooks/useSubjects";
 import type { SubjectFormValues, SubjectListItem } from "@/types/subjects";
 
@@ -29,6 +30,8 @@ export function SubjectManagement() {
   const {
     subjects,
     teachers,
+    rooms,
+    courses,
     isLoading,
     isEmpty,
     error,
@@ -52,7 +55,11 @@ export function SubjectManagement() {
       (subject) =>
         subject.name.toLowerCase().includes(query) ||
         subject.teacherName.toLowerCase().includes(query) ||
-        ROOM_TYPE_LABELS[subject.roomType].toLowerCase().includes(query),
+        subject.roomName.toLowerCase().includes(query) ||
+        subject.courseName.toLowerCase().includes(query) ||
+        subject.courseCode.toLowerCase().includes(query) ||
+        ROOM_TYPE_LABELS[subject.roomType].toLowerCase().includes(query) ||
+        SUBJECT_YEAR_LEVEL_LABELS[subject.year].toLowerCase().includes(query),
     );
   }, [subjects, search]);
 
@@ -75,9 +82,10 @@ export function SubjectManagement() {
           <TableHeader>
             <TableRow>
               <TableHead className="w-44">Subject</TableHead>
+              <TableHead>Course</TableHead>
+              <TableHead>Year</TableHead>
               <TableHead>Category</TableHead>
               <TableHead>Duration</TableHead>
-              <TableHead>Meetings</TableHead>
               <TableHead>Teacher</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -89,10 +97,13 @@ export function SubjectManagement() {
                   <Skeleton className="h-4 w-32" />
                 </TableCell>
                 <TableCell>
+                  <Skeleton className="h-4 w-32" />
+                </TableCell>
+                <TableCell>
                   <Skeleton className="h-5 w-16" />
                 </TableCell>
                 <TableCell>
-                  <Skeleton className="h-4 w-12" />
+                  <Skeleton className="h-5 w-16" />
                 </TableCell>
                 <TableCell>
                   <Skeleton className="h-4 w-12" />
@@ -150,9 +161,10 @@ export function SubjectManagement() {
         <TableHeader>
           <TableRow>
             <TableHead className="w-44">Subject</TableHead>
+            <TableHead>Course</TableHead>
+            <TableHead>Year</TableHead>
             <TableHead>Category</TableHead>
             <TableHead>Duration</TableHead>
-            <TableHead>Meetings</TableHead>
             <TableHead>Teacher</TableHead>
             <TableHead className="text-right">Actions</TableHead>
           </TableRow>
@@ -160,17 +172,32 @@ export function SubjectManagement() {
         <TableBody>
           {filteredSubjects.map((subject) => (
             <TableRow key={subject._id}>
-              <TableCell className="font-medium">{subject.name}</TableCell>
+              <TableCell className="font-medium">
+                <span className="truncate">{subject.name}</span>
+              </TableCell>
               <TableCell>
-                <Badge variant="secondary">
-                  {ROOM_TYPE_LABELS[subject.roomType]}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary">{subject.courseCode}</Badge>
+                  <span className="text-muted-foreground">
+                    {subject.courseName}
+                  </span>
+                </div>
+              </TableCell>
+              <TableCell>
+                <Badge variant="outline">Year {subject.year}</Badge>
+              </TableCell>
+              <TableCell>
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary">
+                    {ROOM_TYPE_LABELS[subject.roomType]}
+                  </Badge>
+                  <span className="text-muted-foreground">
+                    {subject.roomName}
+                  </span>
+                </div>
               </TableCell>
               <TableCell className="text-muted-foreground">
                 {subject.durationMinutes} min
-              </TableCell>
-              <TableCell className="text-muted-foreground">
-                {subject.meetingsPerWeek} / week
               </TableCell>
               <TableCell className="text-muted-foreground">
                 {subject.teacherName}
@@ -239,6 +266,8 @@ export function SubjectManagement() {
           key={formSession.subject?._id ?? "new"}
           subject={formSession.subject ?? undefined}
           teachers={teachers}
+          rooms={rooms}
+          courses={courses}
           onSubmit={
             formSession.subject
               ? (values: SubjectFormValues) =>

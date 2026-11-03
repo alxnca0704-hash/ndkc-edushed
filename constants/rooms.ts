@@ -1,4 +1,4 @@
-import type { RoomType } from "@/types/subjects";
+import type { RoomType } from "@/types/rooms";
 
 export const ROOM_TYPES = ["lecture", "lab"] as const satisfies readonly RoomType[];
 

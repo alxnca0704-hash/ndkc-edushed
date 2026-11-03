@@ -21,19 +21,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ROOM_TYPE_LABELS, ROOM_TYPES } from "@/constants/subjects";
+import {
+  SUBJECT_YEAR_LEVEL_LABELS,
+  SUBJECT_YEAR_LEVELS,
+} from "@/constants/courses";
+import { ROOM_TYPE_LABELS } from "@/constants/rooms";
+import { asSubjectColorToken, subjectColorTokenForName } from "@/constants/subjectColors";
 import { errorMessage } from "@/lib/result";
 import { subjectFormSchema } from "@/lib/validation/subject";
+import type { SubjectYearLevel } from "@/types/course";
 import type {
-  RoomType,
   SubjectFormValues,
   SubjectListItem,
   TeacherOption,
 } from "@/types/subjects";
+import type { Course } from "@/types/course";
+import type { Room } from "@/types/rooms";
 
 export interface SubjectFormDialogProps {
   subject?: SubjectListItem;
   teachers: TeacherOption[];
+  rooms: Room[];
+  courses: Course[];
   onSubmit: (values: SubjectFormValues) => Promise<void>;
   onClose: () => void;
 }
@@ -43,6 +52,8 @@ type FieldErrors = Partial<Record<keyof SubjectFormValues, string>>;
 export function SubjectFormDialog({
   subject,
   teachers,
+  rooms,
+  courses,
   onSubmit,
   onClose,
 }: SubjectFormDialogProps) {
@@ -51,11 +62,12 @@ export function SubjectFormDialog({
   const [durationMinutes, setDurationMinutes] = useState(
     subject ? String(subject.durationMinutes) : "",
   );
-  const [meetingsPerWeek, setMeetingsPerWeek] = useState(
-    subject ? String(subject.meetingsPerWeek) : "",
+  const [roomId, setRoomId] = useState<string | null>(subject?.roomId ?? null);
+  const [courseId, setCourseId] = useState<string | null>(
+    subject?.courseId ?? null,
   );
-  const [roomType, setRoomType] = useState<RoomType | null>(
-    subject?.roomType ?? null,
+  const [year, setYear] = useState<string | null>(
+    subject ? String(subject.year) : null,
   );
   const [teacherId, setTeacherId] = useState<string | null>(
     subject?.teacherId ?? null,
@@ -66,6 +78,11 @@ export function SubjectFormDialog({
 
   const isEditing = Boolean(subject);
   const noTeachers = teachers.length === 0;
+  const noRooms = rooms.length === 0;
+  const noCourses = courses.length === 0;
+  const color = subject
+    ? asSubjectColorToken(subject.color)
+    : subjectColorTokenForName(name);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -73,9 +90,11 @@ export function SubjectFormDialog({
     const parsed = subjectFormSchema.safeParse({
       name,
       durationMinutes,
-      meetingsPerWeek,
-      roomType: roomType ?? "",
+      roomId: roomId ?? "",
+      courseId: courseId ?? "",
+      year: year ?? "",
       teacherId: teacherId ?? "",
+      color,
     });
 
     if (!parsed.success) {
@@ -163,54 +182,103 @@ export function SubjectFormDialog({
                 </p>
               ) : null}
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor={`${formId}-meetings`}>Meetings / week</Label>
-              <Input
-                id={`${formId}-meetings`}
-                type="number"
-                min={1}
-                max={10}
-                value={meetingsPerWeek}
-                onChange={(event) => setMeetingsPerWeek(event.target.value)}
-                placeholder="2"
-                aria-invalid={Boolean(fieldErrors.meetingsPerWeek)}
-              />
-              {fieldErrors.meetingsPerWeek ? (
-                <p className="text-xs text-destructive">
-                  {fieldErrors.meetingsPerWeek}
-                </p>
-              ) : null}
-            </div>
           </div>
 
           <div className="grid gap-2">
-            <Label>Category / room type</Label>
+            <Label>Room</Label>
             <Select
-              value={roomType}
-              onValueChange={(value) =>
-                setRoomType(value as RoomType | null)
-              }
+              value={roomId}
+              onValueChange={setRoomId}
+              modal={false}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue>
+                  {(value) => {
+                    const room = rooms.find((r) => r._id === value);
+                    return room ? (
+                      `${room.name} (${ROOM_TYPE_LABELS[room.type]})`
+                    ) : noRooms ? (
+                      "No rooms available"
+                    ) : (
+                      "Select a room"
+                    );
+                  }}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {rooms.map((room) => (
+                  <SelectItem key={room._id} value={room._id}>
+                    {room.name} ({ROOM_TYPE_LABELS[room.type]})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {fieldErrors.roomId ? (
+              <p className="text-xs text-destructive">{fieldErrors.roomId}</p>
+            ) : null}
+          </div>
+
+          <div className="grid gap-2">
+            <Label>Course</Label>
+            <Select
+              value={courseId}
+              onValueChange={setCourseId}
+              modal={false}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue>
+                  {(value) => {
+                    const course = courses.find((c) => c._id === value);
+                    return (
+                      course?.name ??
+                      (noCourses
+                        ? "No courses available"
+                        : "Select a course")
+                    );
+                  }}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {courses.map((course) => (
+                  <SelectItem key={course._id} value={course._id}>
+                    {course.name} ({course.code})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {fieldErrors.courseId ? (
+              <p className="text-xs text-destructive">{fieldErrors.courseId}</p>
+            ) : null}
+          </div>
+
+          <div className="grid gap-2">
+            <Label>Year level</Label>
+            <Select
+              value={year}
+              onValueChange={setYear}
               modal={false}
             >
               <SelectTrigger className="w-full">
                 <SelectValue>
                   {(value) =>
                     value
-                      ? ROOM_TYPE_LABELS[value as RoomType]
-                      : "Select a room type"
+                      ? SUBJECT_YEAR_LEVEL_LABELS[
+                          Number(value) as SubjectYearLevel
+                        ]
+                      : "Select a year level"
                   }
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                {ROOM_TYPES.map((type) => (
-                  <SelectItem key={type} value={type}>
-                    {ROOM_TYPE_LABELS[type]}
+                {SUBJECT_YEAR_LEVELS.map((yearLevel) => (
+                  <SelectItem key={yearLevel} value={String(yearLevel)}>
+                    {SUBJECT_YEAR_LEVEL_LABELS[yearLevel]}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            {fieldErrors.roomType ? (
-              <p className="text-xs text-destructive">{fieldErrors.roomType}</p>
+            {fieldErrors.year ? (
+              <p className="text-xs text-destructive">{fieldErrors.year}</p>
             ) : null}
           </div>
 

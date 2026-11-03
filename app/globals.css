@@ -27,8 +27,11 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
+  --color-accent-primary: var(--accent-primary);
+  --color-accent-primary-foreground: var(--accent-primary-foreground);
   --color-muted-foreground: var(--muted-foreground);
   --color-muted: var(--muted);
   --color-secondary-foreground: var(--secondary-foreground);
@@ -39,6 +42,39 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-schedule-column: var(--schedule-column);
+  --color-schedule-card: var(--schedule-card);
+  --color-schedule-rule: var(--schedule-rule);
+  --color-subject-green-surface: var(--subject-green-surface);
+  --color-subject-green-foreground: var(--subject-green-foreground);
+  --color-subject-green-muted: var(--subject-green-muted);
+  --color-subject-olive-surface: var(--subject-olive-surface);
+  --color-subject-olive-foreground: var(--subject-olive-foreground);
+  --color-subject-olive-muted: var(--subject-olive-muted);
+  --color-subject-amber-surface: var(--subject-amber-surface);
+  --color-subject-amber-foreground: var(--subject-amber-foreground);
+  --color-subject-amber-muted: var(--subject-amber-muted);
+  --color-subject-rose-surface: var(--subject-rose-surface);
+  --color-subject-rose-foreground: var(--subject-rose-foreground);
+  --color-subject-rose-muted: var(--subject-rose-muted);
+  --color-subject-magenta-surface: var(--subject-magenta-surface);
+  --color-subject-magenta-foreground: var(--subject-magenta-foreground);
+  --color-subject-magenta-muted: var(--subject-magenta-muted);
+  --color-subject-violet-surface: var(--subject-violet-surface);
+  --color-subject-violet-foreground: var(--subject-violet-foreground);
+  --color-subject-violet-muted: var(--subject-violet-muted);
+  --color-subject-indigo-surface: var(--subject-indigo-surface);
+  --color-subject-indigo-foreground: var(--subject-indigo-foreground);
+  --color-subject-indigo-muted: var(--subject-indigo-muted);
+  --color-subject-sky-surface: var(--subject-sky-surface);
+  --color-subject-sky-foreground: var(--subject-sky-foreground);
+  --color-subject-sky-muted: var(--subject-sky-muted);
+  --color-subject-teal-surface: var(--subject-teal-surface);
+  --color-subject-teal-foreground: var(--subject-teal-foreground);
+  --color-subject-teal-muted: var(--subject-teal-muted);
+  --color-subject-slate-surface: var(--subject-slate-surface);
+  --color-subject-slate-foreground: var(--subject-slate-foreground);
+  --color-subject-slate-muted: var(--subject-slate-muted);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -67,7 +103,10 @@ body {
   --muted-foreground: oklch(0.556 0 0);
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
+  --accent-primary: oklch(0.45 0.116 152);
+  --accent-primary-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -77,14 +116,75 @@ body {
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar: #072b04;
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(1 0 0);
+  --sidebar-primary-foreground: oklch(0.2 0.06 145);
+  --sidebar-accent: oklch(1 0 0 / 12%);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 12%);
+  --sidebar-ring: oklch(0.82 0.08 145);
+  /* Height of one 60-minute time-block row in the schedule grid. Fixed so a
+     class spanning several slots lines up across both day-pair columns. Sized
+     against the card's single-slot content (subject + teacher, ~34px) plus its
+     padding, so a 60-minute class never clips. */
+  --schedule-row-height: 3.5rem;
+  /* The schedule's structural layers are NEUTRAL. The wash behind each day pair
+     and the hour hairline only have to make the grid legible — a `bg-card` block
+     on a white page was effectively invisible before the cards were given a
+     wash of their own, and that wash is now the *subject's* color, so a green
+     column behind a green subject reads as two of the same thing. Hue 152 is
+     spent on the subject palette's green slot instead (the app's existing
+     `--accent-primary` green), which keeps the accent the timetable already had
+     while leaving the chrome around it colorless. */
+  --schedule-column: oklch(0.97 0 0);
+  --schedule-rule: oklch(0.885 0 0);
+  --schedule-card: oklch(0.95 0 0);
+
+  /* The subject palette: ten muted, low-chroma hues, three steps each — a soft
+     wash for the surface, a full tone for the ink on it, and a middle step for
+     the teacher/room line inside a card. No hue is above ~0.13 chroma (the
+     no-neon rule in `code-standards.md`), and the first slot is the app's own
+     green so an unassigned subject still looks like the timetable used to. The
+     token names are the values stored on `subjects.color` and snapshotted onto
+     each generated `schedules` row, so adding a slot here means adding it to
+     `SUBJECT_COLOR_TOKENS` too. */
+  --subject-green-surface: oklch(0.945 0.042 152);
+  --subject-green-foreground: oklch(0.35 0.09 152);
+  --subject-green-muted: oklch(0.52 0.07 152);
+  --subject-olive-surface: oklch(0.945 0.048 118);
+  --subject-olive-foreground: oklch(0.4 0.085 118);
+  --subject-olive-muted: oklch(0.53 0.07 118);
+  --subject-amber-surface: oklch(0.945 0.055 75);
+  --subject-amber-foreground: oklch(0.43 0.1 70);
+  --subject-amber-muted: oklch(0.55 0.085 70);
+  --subject-rose-surface: oklch(0.945 0.042 25);
+  --subject-rose-foreground: oklch(0.42 0.115 25);
+  --subject-rose-muted: oklch(0.54 0.095 25);
+  --subject-magenta-surface: oklch(0.94 0.048 350);
+  --subject-magenta-foreground: oklch(0.42 0.125 350);
+  --subject-magenta-muted: oklch(0.54 0.105 350);
+  --subject-violet-surface: oklch(0.94 0.05 315);
+  --subject-violet-foreground: oklch(0.42 0.125 315);
+  --subject-violet-muted: oklch(0.54 0.105 315);
+  --subject-indigo-surface: oklch(0.94 0.045 280);
+  --subject-indigo-foreground: oklch(0.42 0.115 280);
+  --subject-indigo-muted: oklch(0.55 0.095 280);
+  --subject-sky-surface: oklch(0.945 0.04 250);
+  --subject-sky-foreground: oklch(0.42 0.1 250);
+  --subject-sky-muted: oklch(0.55 0.085 250);
+  --subject-teal-surface: oklch(0.945 0.042 195);
+  --subject-teal-foreground: oklch(0.38 0.085 195);
+  --subject-teal-muted: oklch(0.53 0.07 195);
+  --subject-slate-surface: oklch(0.945 0.012 255);
+  --subject-slate-foreground: oklch(0.4 0.028 255);
+  --subject-slate-muted: oklch(0.54 0.025 255);
+}
+
+@media (width >= 40rem) {
+  :root {
+    --schedule-row-height: 4rem;
+  }
 }
 
 .dark {
@@ -102,7 +202,10 @@ body {
   --muted-foreground: oklch(0.708 0 0);
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
+  --accent-primary: oklch(0.62 0.13 152);
+  --accent-primary-foreground: oklch(0.16 0.02 152);
   --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.145 0 0);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
@@ -111,14 +214,50 @@ body {
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
+  --sidebar: #072b04;
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-primary: oklch(1 0 0);
+  --sidebar-primary-foreground: oklch(0.2 0.06 145);
+  --sidebar-accent: oklch(1 0 0 / 12%);
   --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-border: oklch(1 0 0 / 12%);
+  --sidebar-ring: oklch(0.82 0.08 145);
+  /* Neutral for the same reason as the light values: color on this surface
+     means "which subject", and the chrome behind it must not compete. */
+  --schedule-column: oklch(0.185 0 0);
+  --schedule-rule: oklch(0.3 0 0);
+  --schedule-card: oklch(0.27 0 0);
+
+  --subject-green-surface: oklch(0.28 0.045 152);
+  --subject-green-foreground: oklch(0.93 0.045 152);
+  --subject-green-muted: oklch(0.76 0.05 152);
+  --subject-olive-surface: oklch(0.28 0.04 118);
+  --subject-olive-foreground: oklch(0.93 0.04 118);
+  --subject-olive-muted: oklch(0.76 0.045 118);
+  --subject-amber-surface: oklch(0.29 0.045 75);
+  --subject-amber-foreground: oklch(0.94 0.04 78);
+  --subject-amber-muted: oklch(0.78 0.045 78);
+  --subject-rose-surface: oklch(0.28 0.045 25);
+  --subject-rose-foreground: oklch(0.93 0.035 25);
+  --subject-rose-muted: oklch(0.77 0.04 25);
+  --subject-magenta-surface: oklch(0.28 0.05 350);
+  --subject-magenta-foreground: oklch(0.93 0.035 350);
+  --subject-magenta-muted: oklch(0.77 0.04 350);
+  --subject-violet-surface: oklch(0.28 0.05 315);
+  --subject-violet-foreground: oklch(0.93 0.035 315);
+  --subject-violet-muted: oklch(0.77 0.04 315);
+  --subject-indigo-surface: oklch(0.28 0.05 280);
+  --subject-indigo-foreground: oklch(0.93 0.03 280);
+  --subject-indigo-muted: oklch(0.77 0.04 280);
+  --subject-sky-surface: oklch(0.28 0.05 250);
+  --subject-sky-foreground: oklch(0.93 0.035 250);
+  --subject-sky-muted: oklch(0.77 0.045 250);
+  --subject-teal-surface: oklch(0.28 0.045 195);
+  --subject-teal-foreground: oklch(0.93 0.04 195);
+  --subject-teal-muted: oklch(0.76 0.045 195);
+  --subject-slate-surface: oklch(0.28 0.012 255);
+  --subject-slate-foreground: oklch(0.93 0.012 255);
+  --subject-slate-muted: oklch(0.76 0.015 255);
 }
 
 @layer base {

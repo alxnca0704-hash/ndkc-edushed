@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { ROOM_TYPES } from "@/constants/subjects";
+import { SUBJECT_YEAR_LEVELS } from "@/constants/courses";
+import { SUBJECT_COLOR_TOKENS } from "@/constants/subjectColors";
 
 export const subjectFormSchema = z.object({
   name: z
@@ -13,15 +14,13 @@ export const subjectFormSchema = z.object({
     .int("Duration must be a whole number")
     .positive("Duration must be greater than 0")
     .max(480, "Duration must be 480 minutes or fewer"),
-  meetingsPerWeek: z.coerce
+  roomId: z.string().min(1, "Choose a room"),
+  courseId: z.string().min(1, "Choose a course"),
+  year: z.coerce
     .number()
-    .int("Meetings must be a whole number")
-    .positive("Meetings must be at least 1")
-    .max(10, "Meetings must be 10 or fewer"),
-  roomType: z.enum(ROOM_TYPES, {
-    message: "Choose a room type",
-  }),
+    .pipe(z.literal(SUBJECT_YEAR_LEVELS, "Choose a year level")),
   teacherId: z.string().min(1, "Assign a teacher"),
+  color: z.enum(SUBJECT_COLOR_TOKENS),
 });
 
 export type SubjectFormSchema = z.infer<typeof subjectFormSchema>;

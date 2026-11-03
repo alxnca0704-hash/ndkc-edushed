@@ -1,25 +1,55 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
-import { isDean } from "./roles";
+import {
+  asSubjectColorToken,
+  isSubjectColorToken,
+  subjectColorTokenForName,
+} from "../constants/subjectColors";
+import { isAdmin, isDean } from "./roles";
+import { userDisplayName } from "./userNames";
 
-const ROOM_TYPES = v.union(v.literal("lecture"), v.literal("lab"));
+const YEAR_LEVELS = v.union(
+  v.literal(1),
+  v.literal(2),
+  v.literal(3),
+  v.literal(4),
+);
 
 const subjectFields = {
   name: v.string(),
   durationMinutes: v.number(),
-  meetingsPerWeek: v.number(),
-  roomType: ROOM_TYPES,
+  roomId: v.id("rooms"),
+  courseId: v.id("courses"),
+  year: YEAR_LEVELS,
   teacherId: v.string(),
+  /**
+   * Optional so a caller that never heard of colors still works: the mutation
+   * assigns a deterministic one instead of rejecting the write. An unrecognized
+   * token is treated as absent rather than stored, since a token outside
+   * `SUBJECT_COLOR_TOKENS` has no classes to render.
+   */
+  color: v.optional(v.string()),
 };
 
-function teacherDisplayName(doc: {
-  firstName?: string;
-  lastName?: string;
-  email: string;
-}): string {
-  const name = [doc.firstName, doc.lastName].filter(Boolean).join(" ").trim();
-  return name || doc.email;
+/**
+ * The color to store: the Dean's pick when they made one, the color the doc
+ * already has otherwise, and a deterministic hash of the name when there is
+ * neither.
+ *
+ * The middle case is the point of storing the color at all — an edit that says
+ * nothing about color must not move a subject off the color every generated
+ * schedule has been drawn in. The last case covers a doc written before colors
+ * existed, or one holding a token the palette has since dropped.
+ */
+function resolveColor(requested: unknown, existing: unknown, name: string): string {
+  if (isSubjectColorToken(requested)) {
+    return requested;
+  }
+  if (isSubjectColorToken(existing)) {
+    return existing;
+  }
+  return subjectColorTokenForName(name);
 }
 
 function toErrorString(error: unknown): string {
@@ -34,7 +64,7 @@ export const listAll = query({
     try {
       const identity = await ctx.auth.getUserIdentity();
 
-      if (!isDean(identity)) {
+      if (!isDean(identity) && !isAdmin(identity)) {
         return { ok: true as const, data: [] };
       }
 
@@ -43,20 +73,44 @@ export const listAll = query({
         .query("users")
         .withIndex("by_role", (q) => q.eq("role", "teacher"))
         .collect();
+      const rooms = await ctx.db.query("rooms").collect();
+      const courses = await ctx.db.query("courses").collect();
+      const departments = await ctx.db.query("departments").collect();
 
       const teacherByName = new Map(
         teachers.map((teacher) => [
           teacher.clerkId,
-          teacherDisplayName(teacher),
+          userDisplayName(teacher),
         ]),
       );
 
+      const roomById = new Map(rooms.map((room) => [room._id, room]));
+      const courseById = new Map(courses.map((course) => [course._id, course]));
+      const departmentById = new Map(departments.map((dept) => [dept._id, dept]));
+
       return {
         ok: true as const,
-        data: subjects.map((subject) => ({
-          ...subject,
-          teacherName: teacherByName.get(subject.teacherId) ?? "—",
-        })),
+        data: subjects.map((subject) => {
+          const room = roomById.get(subject.roomId);
+          const course = subject.courseId
+            ? courseById.get(subject.courseId)
+            : undefined;
+          const department = course?.departmentId
+            ? departmentById.get(course.departmentId)
+            : undefined;
+          return {
+            ...subject,
+            color: asSubjectColorToken(subject.color),
+            roomName: room?.name ?? "—",
+            roomType: room?.type ?? "lecture",
+            courseName: course?.name ?? "—",
+            courseCode: course?.code ?? "—",
+            departmentId: course?.departmentId,
+            departmentName: department?.name,
+            departmentCode: department?.code,
+            teacherName: teacherByName.get(subject.teacherId) ?? "—",
+          };
+        }),
       };
     } catch (error) {
       return { ok: false as const, error: toErrorString(error) };
@@ -73,6 +127,18 @@ export const create = mutation({
       throw new Error("Unauthorized");
     }
 
+    const room = await ctx.db.get(args.roomId);
+
+    if (!room) {
+      throw new Error("Selected room does not exist");
+    }
+
+    const course = await ctx.db.get(args.courseId);
+
+    if (!course) {
+      throw new Error("Selected course does not exist");
+    }
+
     const teacher = await ctx.db
       .query("users")
       .withIndex("by_clerkId", (q) => q.eq("clerkId", args.teacherId))
@@ -87,9 +153,14 @@ export const create = mutation({
     return ctx.db.insert("subjects", {
       name: args.name.trim(),
       durationMinutes: args.durationMinutes,
-      meetingsPerWeek: args.meetingsPerWeek,
-      roomType: args.roomType,
+      roomId: args.roomId,
+      courseId: args.courseId,
+      year: args.year,
       teacherId: args.teacherId,
+      // Assigned once, here, and stored from then on: the Dean can repick it
+      // later, but nothing about editing a name or a room silently moves a
+      // subject off the color it has been drawn in.
+      color: resolveColor(args.color, undefined, args.name),
       createdAt: now,
       updatedAt: now,
     });
@@ -114,6 +185,18 @@ export const update = mutation({
       throw new Error("Subject not found");
     }
 
+    const room = await ctx.db.get(args.roomId);
+
+    if (!room) {
+      throw new Error("Selected room does not exist");
+    }
+
+    const course = await ctx.db.get(args.courseId);
+
+    if (!course) {
+      throw new Error("Selected course does not exist");
+    }
+
     const teacher = await ctx.db
       .query("users")
       .withIndex("by_clerkId", (q) => q.eq("clerkId", args.teacherId))
@@ -126,9 +209,11 @@ export const update = mutation({
     await ctx.db.patch(args.id, {
       name: args.name.trim(),
       durationMinutes: args.durationMinutes,
-      meetingsPerWeek: args.meetingsPerWeek,
-      roomType: args.roomType,
+      roomId: args.roomId,
+      courseId: args.courseId,
+      year: args.year,
       teacherId: args.teacherId,
+      color: resolveColor(args.color, existing.color, args.name),
       updatedAt: Date.now(),
     });
 

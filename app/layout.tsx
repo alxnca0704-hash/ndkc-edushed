@@ -1,12 +1,11 @@
-import type { CSSProperties } from "react";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
 import { ClerkProvider } from "@clerk/nextjs";
 import { ConfigProvider, type ThemeConfig } from "antd";
 
-import { AppHeader } from "@/components/AppHeader";
 import { ConvexClientProvider } from "@/components/ConvexClientProvider";
+import { Toaster } from "@/components/ui/sonner";
 
 import "./globals.css";
 
@@ -21,7 +20,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "NDKC EdSched",
+  title: "NDKC EduSched",
   description: "Class scheduling for NDKC",
 };
 
@@ -46,17 +45,14 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body
-        className="min-h-full bg-slate-50 text-gray-900"
-        style={{ "--app-header-height": "3.5rem" } as CSSProperties}
-      >
+      <body className="min-h-full bg-slate-50 text-gray-900">
         <ClerkProvider>
           <ConvexClientProvider>
             <AntdRegistry>
               <ConfigProvider theme={theme}>
                 <div className="flex min-h-screen flex-col">
-                  <AppHeader />
                   <main className="flex flex-1 flex-col">{children}</main>
+                  <Toaster position="top-right" />
                 </div>
               </ConfigProvider>
             </AntdRegistry>
