@@ -1,7 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
-import { isDean } from "./roles";
+import { isAdmin, isDean } from "./roles";
 
 const ROOM_TYPES = v.union(v.literal("lecture"), v.literal("lab"));
 
@@ -22,7 +22,7 @@ export const listAll = query({
     try {
       const identity = await ctx.auth.getUserIdentity();
 
-      if (!isDean(identity)) {
+      if (!isDean(identity) && !isAdmin(identity)) {
         return { ok: true as const, data: [] };
       }
 
@@ -43,8 +43,8 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
 
-    if (!isDean(identity)) {
-      throw new Error("Unauthorized");
+    if (!isAdmin(identity)) {
+      throw new Error("Unauthorized: Only Admin can create rooms");
     }
 
     const now = Date.now();
@@ -66,8 +66,8 @@ export const update = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
 
-    if (!isDean(identity)) {
-      throw new Error("Unauthorized");
+    if (!isAdmin(identity)) {
+      throw new Error("Unauthorized: Only Admin can update rooms");
     }
 
     const existing = await ctx.db.get(args.id);
@@ -91,8 +91,8 @@ export const remove = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
 
-    if (!isDean(identity)) {
-      throw new Error("Unauthorized");
+    if (!isAdmin(identity)) {
+      throw new Error("Unauthorized: Only Admin can delete rooms");
     }
 
     const existing = await ctx.db.get(args.id);

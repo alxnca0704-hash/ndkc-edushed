@@ -1,5 +1,7 @@
-import { RoomManagement } from "@/components/rooms/RoomManagement";
+import { redirect } from "next/navigation";
 
-export default async function DeanRoomsPage() {
-  return <RoomManagement />;
+import { APP_ROUTES } from "@/constants/routes";
+
+export default function DeanRoomsPage() {
+  redirect(APP_ROUTES.dean);
 }

@@ -3,7 +3,6 @@
 import {
   BookOpen,
   CalendarCog,
-  DoorOpen,
   GraduationCap,
   LayoutDashboard,
 } from "lucide-react";
@@ -28,11 +27,6 @@ const DEAN_NAV: readonly AppSidebarNavGroup[] = [
   {
     title: "Manage",
     items: [
-      {
-        title: "Manage Rooms",
-        href: APP_ROUTES.deanRooms,
-        icon: DoorOpen,
-      },
       {
         title: "Manage Subjects",
         href: APP_ROUTES.deanSubjects,

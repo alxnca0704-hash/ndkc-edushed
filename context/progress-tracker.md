@@ -2,6 +2,13 @@
 
 ## Latest Change
 
+- **Admin Features (spec 16):**
+  - **Room Management Reassigned to Admin:** Shifted room CRUD from Dean to Admin (`/admin/rooms`). Updated `convex/rooms.ts` so mutation endpoints (`create`, `update`, `remove`) require `isAdmin(identity)`, while both Admin and Dean retain query access (`listAll`). Removed "Manage Rooms" from the Dean navigation rail (`components/DeanSidebar.tsx`) and redirected `/dean/rooms` to `/dean`.
+  - **Department Management:** Created the `departments` table in Convex schema (`convex/schema.ts`) and CRUD backend in `convex/departments.ts`. Added frontend types (`types/departments.ts`), hook (`hooks/useDepartments.ts`), and management UI (`components/departments/DepartmentManagement.tsx`, `DepartmentFormDialog.tsx`, `DepartmentDeleteDialog.tsx`) under `/admin/departments`. Added optional `departmentId` link to `courses` and `users`.
+  - **Dean Management Account Selection & Clerk Role Sync (spec 16 update):** Replaced manual typing of first name, last name, and Gmail address in `DeanFormDialog` with a dedicated account picker. Built `convex/deans.ts` `listAvailableAccounts` (listing non-admin accounts from Convex database/Clerk that are not already assigned deans with departments) and `assignDean` mutation (with auto-insert fallback if account record was not in DB). Created admin role synchronization endpoint `/api/admin/role` using `@clerk/nextjs/server` `createClerkClient`. When a teacher/account is assigned as Dean, their Clerk `publicMetadata.role` is updated to `"dean"`, which updates their Clerk session claims and routes them immediately to the Dean dashboard (`/dean`) instead of being restricted to `/teacher`. When a Dean is removed, their Clerk role reverts to `"teacher"`. Added `RoleSyncListener` in `ConvexClientProvider` to automatically detect live database role updates via WebSocket, reload the Clerk session (`user.reload()`), and refresh the browser automatically so that route guards and tokens apply immediately. Updated `convex/teachers.ts` (`syncFromClerk`, `getTeachers`, `upsertTeacher`) to allow both Dean and Admin and to fall back to the live database `users` record to eliminate transient unauthorized errors during role transitions. Added background auto-sync in `useDeans.ts`.
+  - **Dean Management:** Created `convex/deans.ts` supporting `listAll`, `upsertDean`, `update`, `remove`, and `syncFromClerk`. Added frontend types (`types/deans.ts`), hook (`hooks/useDeans.ts`), and management UI (`components/deans/DeanManagement.tsx`, `DeanFormDialog.tsx`, `DeanDeleteDialog.tsx`) under `/admin/deans` to manage deans and assign them to departments.
+  - **Compiled Multi-Department Schedules & CSP Conflict Resolution:** Built `/admin/schedule` powered by `convex/schedule.ts` (`listCompiled`, `compileAndResolveConflicts`, `simulateCrossDepartmentConflict`) and `hooks/useAdminSchedule.ts`. Combines schedules from all departments into a master university timetable with department filtering and live search. When different department schedules are compiled and produce resource conflicts (shared rooms or teacher double-bookings), Admin can execute the Constraint Satisfaction Problem (`repair.ts` CSP backtracking engine with MRV, LCV, and forward checking) to automatically resolve cross-department conflicts.
+  - **Admin Navigation & Overview:** Added Manage Rooms, Manage Departments, Manage Deans, and Compiled Schedule navigation items to `components/AdminSidebar.tsx` and updated `app/admin/page.tsx` with modern overview cards. All ESLint and TypeScript checks pass.
 - **Admin account and home:** added the `admin` Clerk role, routed it to
   `/admin`, and created a protected placeholder home with the shared sidebar and
   top bar. The Clerk account for `carbonellalex955@gmail.com` was created with
@@ -24,22 +31,16 @@
 
 ## Current Phase
 
-Complete for spec 15. Dean and Teacher can scan scheduled meetings in the same
-simple table; the Teacher view is scoped to their own schedule. Empty, loading,
-and error behavior and schedule generation controls remain in the existing page
-flow. Paired MW/TTh records render once. Teacher names resolve from teacher user
-records, so Clerk IDs do not leak into the table. The subject form no longer
-offers color selection, and color is not used to identify a subject in either
-schedule view.
+Complete for spec 16 (Admin Features). Admin manages Rooms, Departments, and Deans,
+and can compile multi-department schedules and run CSP conflict resolution. The Dean
+Management flow now selects accounts from available Clerk/database accounts with no
+manual typing of names and emails.
 
 ## Current Goal
 
-Browser verification is still outstanding. Check both schedule tables at desktop
-and mobile widths, confirm each linked class pair appears once, and confirm
-teacher names display correctly. Confirm the subject form and schedule pages
-show no color picker, legend, or color markers. On the Teacher page, verify the
-day, time, room, and search filters combine correctly and the no-results state
-offers a clear path back to the full schedule.
+Browser verification of Admin features: verify Room CRUD under `/admin/rooms`,
+Department CRUD under `/admin/departments`, Dean assignment via available account picker
+under `/admin/deans`, and compiled schedule resolution under `/admin/schedule`.
 
 ## Completed
 

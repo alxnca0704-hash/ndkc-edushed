@@ -24,3 +24,7 @@ export function roleOf(identity: unknown): AppRole | undefined {
 export function isDean(identity: UserIdentity | null): boolean {
   return roleOf(identity) === "dean";
 }
+
+export function isAdmin(identity: UserIdentity | null): boolean {
+  return roleOf(identity) === "admin";
+}

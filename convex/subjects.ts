@@ -6,7 +6,7 @@ import {
   isSubjectColorToken,
   subjectColorTokenForName,
 } from "../constants/subjectColors";
-import { isDean } from "./roles";
+import { isAdmin, isDean } from "./roles";
 import { userDisplayName } from "./userNames";
 
 const YEAR_LEVELS = v.union(
@@ -64,7 +64,7 @@ export const listAll = query({
     try {
       const identity = await ctx.auth.getUserIdentity();
 
-      if (!isDean(identity)) {
+      if (!isDean(identity) && !isAdmin(identity)) {
         return { ok: true as const, data: [] };
       }
 
@@ -75,6 +75,7 @@ export const listAll = query({
         .collect();
       const rooms = await ctx.db.query("rooms").collect();
       const courses = await ctx.db.query("courses").collect();
+      const departments = await ctx.db.query("departments").collect();
 
       const teacherByName = new Map(
         teachers.map((teacher) => [
@@ -85,6 +86,7 @@ export const listAll = query({
 
       const roomById = new Map(rooms.map((room) => [room._id, room]));
       const courseById = new Map(courses.map((course) => [course._id, course]));
+      const departmentById = new Map(departments.map((dept) => [dept._id, dept]));
 
       return {
         ok: true as const,
@@ -93,17 +95,19 @@ export const listAll = query({
           const course = subject.courseId
             ? courseById.get(subject.courseId)
             : undefined;
+          const department = course?.departmentId
+            ? departmentById.get(course.departmentId)
+            : undefined;
           return {
             ...subject,
-            // The schema field is optional (see the note there), so a subject
-            // stored before colors existed reads as `undefined` here. Resolved
-            // in the query so `SubjectListItem.color` can stay a `string` and no
-            // component has to handle a subject that has no color.
             color: asSubjectColorToken(subject.color),
             roomName: room?.name ?? "—",
             roomType: room?.type ?? "lecture",
             courseName: course?.name ?? "—",
             courseCode: course?.code ?? "—",
+            departmentId: course?.departmentId,
+            departmentName: department?.name,
+            departmentCode: department?.code,
             teacherName: teacherByName.get(subject.teacherId) ?? "—",
           };
         }),

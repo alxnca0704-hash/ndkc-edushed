@@ -1,11 +1,12 @@
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 
-import { isDean } from "./roles";
+import { isAdmin, isDean } from "./roles";
 
 const courseFields = {
   name: v.string(),
   code: v.string(),
+  departmentId: v.optional(v.id("departments")),
 };
 
 function normalizeCode(code: string): string {
@@ -24,7 +25,7 @@ export const listAll = query({
     try {
       const identity = await ctx.auth.getUserIdentity();
 
-      if (!isDean(identity)) {
+      if (!isDean(identity) && !isAdmin(identity)) {
         return { ok: true as const, data: [] };
       }
 
@@ -60,7 +61,7 @@ export const create = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
 
-    if (!isDean(identity)) {
+    if (!isDean(identity) && !isAdmin(identity)) {
       throw new Error("Unauthorized");
     }
 
@@ -77,6 +78,7 @@ export const create = mutation({
     return ctx.db.insert("courses", {
       name: args.name.trim(),
       code,
+      departmentId: args.departmentId,
       createdAt: now,
       updatedAt: now,
     });
@@ -91,7 +93,7 @@ export const update = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
 
-    if (!isDean(identity)) {
+    if (!isDean(identity) && !isAdmin(identity)) {
       throw new Error("Unauthorized");
     }
 
@@ -112,6 +114,7 @@ export const update = mutation({
     await ctx.db.patch(args.id, {
       name: args.name.trim(),
       code,
+      departmentId: args.departmentId,
       updatedAt: Date.now(),
     });
 
@@ -124,7 +127,7 @@ export const remove = mutation({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
 
-    if (!isDean(identity)) {
+    if (!isDean(identity) && !isAdmin(identity)) {
       throw new Error("Unauthorized");
     }
 

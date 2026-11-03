@@ -1,4 +1,4 @@
-import { action, internalMutation, internalQuery, query } from "./_generated/server";
+import { action, internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import { v } from "convex/values";
 
@@ -20,7 +20,8 @@ import type {
 } from "../types/scheduleSettings";
 import { gaGenerate } from "./scheduling/gaGenerate";
 import { repair, type RepairStats } from "./scheduling/repair";
-import { isDean, roleOf } from "./roles";
+import { collectHardViolations } from "./scheduling/validate";
+import { isAdmin, isDean, roleOf } from "./roles";
 import { insertNotification } from "./notifications";
 import { identityDisplayName, userDisplayName } from "./userNames";
 import type {
@@ -45,6 +46,9 @@ const sessionValidator = v.object({
   courseId: v.id("courses"),
   courseCode: v.string(),
   courseName: v.string(),
+  departmentId: v.optional(v.id("departments")),
+  departmentCode: v.optional(v.string()),
+  departmentName: v.optional(v.string()),
   year: yearValidator,
   teacherId: v.string(),
   teacherName: v.string(),
@@ -144,7 +148,7 @@ export const listAvailability = internalQuery({
     try {
       const identity = await ctx.auth.getUserIdentity();
 
-      if (!isDean(identity)) {
+      if (!isDean(identity) && !isAdmin(identity)) {
         return { ok: true, data: [] };
       }
 
@@ -166,11 +170,6 @@ export const listAvailability = internalQuery({
 export const saveGenerated = internalMutation({
   args: {
     sessions: v.array(sessionValidator),
-    /**
-     * Who generated the week, for the notification's body. Optional because the
-     * teacher-facing sentence reads correctly without it ("a new week was
-     * generated for you") — the Dean's name is a nicety, not the fact.
-     */
     actorName: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<number> => {
@@ -191,19 +190,6 @@ export const saveGenerated = internalMutation({
       inserted += 1;
     }
 
-    // Tell each teacher their week changed. This is the one schedule change the
-    // teacher cannot see happen: they have no page that reports that the Dean
-    // pressed Generate, and the Dean's schedule page is not theirs to watch.
-    //
-    // The recipients are derived from the rows just written rather than from the
-    // subjects table, so a teacher is only told about a week they are actually in
-    // — and one of them being left out of a generation is not something this
-    // function can do. Each teacher gets a single notice for the whole generation
-    // (not one per class), because the event is the regeneration, not the classes.
-    //
-    // Counted per placed session, because that is what this app calls a class:
-    // the same unit `useMySchedule` reports as "N classes this week", so the
-    // notification and the schedule page it sends you to cannot disagree.
     const classCounts = new Map<string, number>();
     for (const session of args.sessions) {
       classCounts.set(
@@ -237,7 +223,7 @@ export const listAll = query({
     try {
       const identity = await ctx.auth.getUserIdentity();
 
-      if (!isDean(identity)) {
+      if (!isDean(identity) && !isAdmin(identity)) {
         return { ok: true as const, data: [] };
       }
 
@@ -263,14 +249,6 @@ export const listAll = query({
   },
 });
 
-/**
- * The caller's own schedule rows, read through the `by_teacherId` index.
- *
- * The teacher is resolved from the verified Clerk identity on the server, never
- * from an argument — a client cannot ask for another teacher's rows (Invariant
- * 3), and a Dean (or anonymous caller) gets the same empty result `rooms.listAll`
- * gives instead of a throw, so a failed page load surfaces through `error`.
- */
 export const listMine = query({
   args: {},
   handler: async (ctx) => {
@@ -317,13 +295,10 @@ interface SubjectRow {
   courseId: string;
   courseCode: string;
   courseName: string;
+  departmentId?: string;
+  departmentCode?: string;
+  departmentName?: string;
   year: 1 | 2 | 3 | 4;
-  /**
-   * The subject's palette token. Typed as a plain string because it is validated
-   * as one and normalized with `asSubjectColorToken` on the way into a generated
-   * row — a doc written before colors existed reads as `undefined` at runtime,
-   * and the grid still has to paint it.
-   */
   color?: string;
 }
 
@@ -390,14 +365,6 @@ function buildSchedulingInput(
   };
 }
 
-/**
- * One stored schedule row, built from a placement and the snapshots the two
- * views need to draw the class.
- *
- * Shared by generation and by repair so a row written by either carries
- * identical fields — a repair that rebuilt rows its own way would quietly
- * produce a schedule the grid cannot draw.
- */
 function toSessionRow(
   placement: PlacedSession,
   subjectById: ReadonlyMap<string, SubjectRow>,
@@ -406,9 +373,6 @@ function toSessionRow(
   const subject = subjectById.get(placement.subjectId);
   const room = roomById.get(placement.roomId);
 
-  // Every placement comes from the subject rows the engine was given, so a miss
-  // means the input changed mid-run. Fail loudly instead of writing a row with an
-  // empty course reference.
   if (!subject) {
     throw new Error("A scheduled subject is missing from the scheduling input");
   }
@@ -416,14 +380,13 @@ function toSessionRow(
   return {
     subjectId: placement.subjectId as Id<"subjects">,
     subjectName: subject.name,
-    // Snapshotted, like the course/year below it, so a schedule row carries
-    // everything either view needs to draw a class — and so a subject repainted
-    // after a generate only reaches the timetable on the next one, with every
-    // other snapshot moving at the same time.
     subjectColor: asSubjectColorToken(subject.color),
     courseId: subject.courseId as Id<"courses">,
     courseCode: subject.courseCode,
     courseName: subject.courseName,
+    departmentId: subject.departmentId ? (subject.departmentId as Id<"departments">) : undefined,
+    departmentCode: subject.departmentCode,
+    departmentName: subject.departmentName,
     year: subject.year,
     teacherId: placement.teacherId,
     teacherName: subject.teacherName,
@@ -437,20 +400,6 @@ function toSessionRow(
   };
 }
 
-/**
- * The second half of the thesis's workflow (§7): a teacher's availability has
- * just changed, which can strand a class they were placed for, so the schedule
- * is repaired locally and automatically.
- *
- * There is no "repair" button and no confirmation step. The change is the
- * trigger; the engine moves the classes the new blocks actually broke — and only
- * those — and writes the result. A teacher who blocks one afternoon does not get
- * their Monday reshuffled.
- *
- * If the repair fails the schedule is left exactly as it was. A teacher is not
- * going to lose a class they already had because their new availability made the
- * week impossible; they are told instead, and a Dean can regenerate.
- */
 export const repairAfterAvailabilityChange = internalMutation({
   args: { teacherId: v.string() },
   handler: async (
@@ -482,6 +431,8 @@ export const repairAfterAvailabilityChange = internalMutation({
 
     const subjectDocs = await ctx.db.query("subjects").collect();
     const courseDocs = await ctx.db.query("courses").collect();
+    const departments = await ctx.db.query("departments").collect();
+    const departmentMap = new Map(departments.map((d) => [d._id, d]));
     const teacherDocs = await ctx.db
       .query("users")
       .withIndex("by_role", (q) => q.eq("role", "teacher"))
@@ -493,6 +444,7 @@ export const repairAfterAvailabilityChange = internalMutation({
     const roomTypeById = new Map(rooms.map((room) => [room._id, room.type]));
     const subjects: SubjectRow[] = subjectDocs.map((subject) => {
       const course = courseById.get(subject.courseId);
+      const dept = course?.departmentId ? departmentMap.get(course.departmentId) : undefined;
       return {
         _id: subject._id,
         name: subject.name,
@@ -502,6 +454,9 @@ export const repairAfterAvailabilityChange = internalMutation({
         courseId: subject.courseId,
         courseCode: course?.code ?? "",
         courseName: course?.name ?? "",
+        departmentId: course?.departmentId,
+        departmentCode: dept?.code,
+        departmentName: dept?.name,
         year: subject.year,
         teacherId: subject.teacherId,
         teacherName: teacherNameById.get(subject.teacherId) ?? "Teacher",
@@ -545,9 +500,6 @@ export const repairAfterAvailabilityChange = internalMutation({
     const roomById = new Map(rooms.map((room) => [room._id, room]));
     const now = Date.now();
 
-    // Replace only the rows for the classes that moved. Every other row is left
-    // untouched, which is what makes the repair local in storage as well as in
-    // the search.
     for (const row of scheduleRows) {
       if (movedSubjectIds.has(row.subjectId)) {
         await ctx.db.delete(row._id);
@@ -603,19 +555,9 @@ export const generate = action({
       availabilityResult.data,
     );
 
-    // The GA builds the whole week from nothing (§7). The old pipeline built it
-    // with the CSP and then polished it with `runGA`, which is the ordering the
-    // thesis rejects — and it meant the schedule existed before any optimization
-    // was attempted, so the search could only ever rearrange a finished answer.
-    //
-    // Soft constraints are not a separate pass any more: they are the fitness
-    // function the GA maximizes while it searches.
     const settingsResult: ScheduleSettingsResult = await ctx.runQuery(
       api.scheduleSettings.get,
     );
-    // If the settings record cannot be read the week is still worth building —
-    // with every preference off the search is simply a hunt for the fewest
-    // conflicts, which is a valid, if plain, schedule.
     const settings = settingsResult.ok
       ? settingsResult.data
       : DEFAULT_SCHEDULE_SETTINGS;
@@ -638,12 +580,6 @@ export const generate = action({
       };
     }
 
-    // The GA is allowed to propose invalid weeks while it searches — that is what
-    // the 1001 penalty is for — but the best one it ends with is still a broken
-    // week, and a broken week is not a schedule. Storing it would hand the Dean a
-    // timetable with clashes in it and no indication of which, which is strictly
-    // worse than the old pipeline's guaranteed-valid output. So the conflicts are
-    // reported instead, and the database keeps whatever it had.
     if (!result.valid) {
       return {
         ok: false as const,
@@ -671,5 +607,280 @@ export const generate = action({
     );
 
     return { ok: true as const, count: saved, optimization };
+  },
+});
+
+export const listCompiled = query({
+  args: {},
+  handler: async (ctx) => {
+    try {
+      const identity = await ctx.auth.getUserIdentity();
+
+      if (!isAdmin(identity)) {
+        return { ok: true as const, data: { sessions: [], conflicts: [], departments: [] } };
+      }
+
+      const sessions = await ctx.db.query("schedules").order("asc").collect();
+      const teachers = await ctx.db
+        .query("users")
+        .withIndex("by_role", (q) => q.eq("role", "teacher"))
+        .collect();
+      const teacherNames = new Map(
+        teachers.map((teacher) => [teacher.clerkId, userDisplayName(teacher)]),
+      );
+      const departments = await ctx.db.query("departments").collect();
+      const departmentMap = new Map(departments.map((d) => [d._id, d]));
+      const courses = await ctx.db.query("courses").collect();
+      const courseMap = new Map(courses.map((c) => [c._id, c]));
+
+      const mappedSessions = sessions.map((session) => {
+        const course = courseMap.get(session.courseId);
+        const deptId = session.departmentId ?? course?.departmentId;
+        const dept = deptId ? departmentMap.get(deptId) : undefined;
+        return {
+          ...asSession(session),
+          departmentId: deptId,
+          departmentName: session.departmentName ?? dept?.name ?? "General / Unassigned",
+          departmentCode: session.departmentCode ?? dept?.code ?? "—",
+          teacherName: teacherNames.get(session.teacherId) ?? session.teacherName ?? "Teacher",
+        };
+      });
+
+      const rooms = await ctx.db.query("rooms").collect();
+      const subjects = await ctx.db.query("subjects").collect();
+      const availabilityDocs = await ctx.db.query("availability").collect();
+
+      const availability: AvailabilityPayload[] = availabilityDocs.map((doc) => ({
+        teacherId: doc.teacherId,
+        blockedSlots: doc.blockedSlots,
+      }));
+
+      const roomRows: RoomRow[] = rooms.map((r) => ({ _id: r._id, name: r.name, type: r.type }));
+      const subjectRows: SubjectRow[] = subjects.map((s) => {
+        const c = courseMap.get(s.courseId);
+        const d = c?.departmentId ? departmentMap.get(c.departmentId) : undefined;
+        return {
+          _id: s._id,
+          name: s.name,
+          durationMinutes: s.durationMinutes,
+          roomId: s.roomId,
+          roomType: rooms.find((r) => r._id === s.roomId)?.type ?? "lecture",
+          courseId: s.courseId,
+          courseCode: c?.code ?? "",
+          courseName: c?.name ?? "",
+          departmentId: c?.departmentId,
+          departmentCode: d?.code,
+          departmentName: d?.name,
+          year: s.year,
+          teacherId: s.teacherId,
+          teacherName: teacherNames.get(s.teacherId) ?? "Teacher",
+          color: s.color,
+        };
+      });
+
+      const input = buildSchedulingInput(subjectRows, roomRows, availability);
+      const currentPlacements: PlacedSession[] = sessions.map((row) => ({
+        subjectId: row.subjectId,
+        teacherId: row.teacherId,
+        roomId: row.roomId,
+        dayPattern: row.dayPattern,
+        dayIndex: row.dayIndex,
+        startMinutes: row.startMinutes,
+        endMinutes: row.endMinutes,
+      }));
+
+      const rawViolations = collectHardViolations(input, currentPlacements);
+      const conflicts = rawViolations.map((v) => ({
+        kind: v.kind,
+        message: v.message,
+        subjectIds: [...v.subjectIds],
+      }));
+
+      return {
+        ok: true as const,
+        data: {
+          sessions: mappedSessions,
+          conflicts,
+          departments: departments.map((d) => ({
+            id: d._id,
+            name: d.name,
+            code: d.code,
+          })),
+        },
+      };
+    } catch (error) {
+      return { ok: false as const, error: toErrorString(error) };
+    }
+  },
+});
+
+export const saveRepairedSessions = internalMutation({
+  args: {
+    sessions: v.array(sessionValidator),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    for (const session of args.sessions) {
+      const existing = await ctx.db
+        .query("schedules")
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("subjectId"), session.subjectId),
+            q.eq(q.field("dayIndex"), session.dayIndex),
+          ),
+        )
+        .first();
+
+      if (existing) {
+        await ctx.db.patch(existing._id, {
+          ...session,
+          updatedAt: now,
+        });
+      } else {
+        await ctx.db.insert("schedules", {
+          ...session,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    }
+    return args.sessions.length;
+  },
+});
+
+export const compileAndResolveConflicts = action({
+  args: {},
+  handler: async (ctx): Promise<{
+    ok: boolean;
+    resolved: boolean;
+    message: string;
+    conflicts?: { kind: string; message: string; subjectIds: string[] }[];
+    stats?: RepairStats;
+    movedCount?: number;
+  }> => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity || !isAdmin(identity)) {
+      throw new Error("Unauthorized: Only Admin can compile schedules and resolve conflicts");
+    }
+
+    const compiledResult = await ctx.runQuery(api.schedule.listCompiled);
+    if (!compiledResult.ok) {
+      return { ok: false, resolved: false, message: compiledResult.error };
+    }
+
+    const { sessions, conflicts } = compiledResult.data;
+    if (sessions.length === 0) {
+      return {
+        ok: true,
+        resolved: false,
+        message: "No schedules found to compile. Department schedules must be generated first.",
+      };
+    }
+
+    if (conflicts.length === 0) {
+      return {
+        ok: true,
+        resolved: false,
+        message: "Compiled schedule is already conflict-free across all departments.",
+      };
+    }
+
+    const roomsResult = await ctx.runQuery(api.rooms.listAll);
+    if (!roomsResult.ok) return { ok: false, resolved: false, message: roomsResult.error };
+
+    const subjectsResult = await ctx.runQuery(api.subjects.listAll);
+    if (!subjectsResult.ok) return { ok: false, resolved: false, message: subjectsResult.error };
+
+    const availabilityResult = await ctx.runQuery(internal.schedule.listAvailability);
+    if (!availabilityResult.ok) return { ok: false, resolved: false, message: availabilityResult.error };
+
+    const input = buildSchedulingInput(
+      subjectsResult.data,
+      roomsResult.data,
+      availabilityResult.data,
+    );
+
+    const currentPlacements: PlacedSession[] = sessions.map((row) => ({
+      subjectId: row.subjectId,
+      teacherId: row.teacherId,
+      roomId: row.roomId,
+      dayPattern: row.dayPattern,
+      dayIndex: row.dayIndex,
+      startMinutes: row.startMinutes,
+      endMinutes: row.endMinutes,
+    }));
+
+    const result = repair({
+      input,
+      schedule: currentPlacements,
+      trigger: { kind: "cross-department-conflict" },
+    });
+
+    if (!result.success) {
+      return {
+        ok: false,
+        resolved: false,
+        message: result.reason ?? "Failed to resolve conflicts with CSP",
+        stats: result.stats,
+      };
+    }
+
+    const subjectById = new Map(subjectsResult.data.map((s) => [s._id, s]));
+    const roomById = new Map(roomsResult.data.map((r) => [r._id, r]));
+
+    const repairedRows = result.repairedSessions.map((p) =>
+      toSessionRow(p, subjectById, roomById),
+    );
+
+    await ctx.runMutation(internal.schedule.saveRepairedSessions, {
+      sessions: repairedRows,
+    });
+
+    return {
+      ok: true,
+      resolved: true,
+      movedCount: result.affectedCount,
+      stats: result.stats,
+      message: `CSP successfully resolved ${conflicts.length} conflict(s) across departments by repositioning ${result.affectedCount} class(es).`,
+    };
+  },
+});
+
+export const simulateCrossDepartmentConflict = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!isAdmin(identity)) {
+      throw new Error("Unauthorized: Only Admin can simulate conflicts");
+    }
+
+    const sessions = await ctx.db.query("schedules").collect();
+    if (sessions.length < 2) {
+      throw new Error("Need at least 2 scheduled classes to simulate a cross-department conflict");
+    }
+
+    const sessionA = sessions[0];
+    const sessionB = sessions.find((s) => s.subjectId !== sessionA.subjectId);
+
+    if (!sessionB) {
+      throw new Error("Could not find distinct subjects to conflict");
+    }
+
+    await ctx.db.patch(sessionB._id, {
+      roomId: sessionA.roomId,
+      roomName: sessionA.roomName,
+      roomType: sessionA.roomType,
+      dayPattern: sessionA.dayPattern,
+      dayIndex: sessionA.dayIndex,
+      startMinutes: sessionA.startMinutes,
+      endMinutes: sessionA.endMinutes,
+      updatedAt: Date.now(),
+    });
+
+    return {
+      conflictedSubjectA: sessionA.subjectName,
+      conflictedSubjectB: sessionB.subjectName,
+      room: sessionA.roomName,
+    };
   },
 });

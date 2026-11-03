@@ -10,6 +10,8 @@
 
 import type * as availability from "../availability.js";
 import type * as courses from "../courses.js";
+import type * as deans from "../deans.js";
+import type * as departments from "../departments.js";
 import type * as migrations from "../migrations.js";
 import type * as notifications from "../notifications.js";
 import type * as roles from "../roles.js";
@@ -38,6 +40,8 @@ import type {
 declare const fullApi: ApiFromModules<{
   availability: typeof availability;
   courses: typeof courses;
+  deans: typeof deans;
+  departments: typeof departments;
   migrations: typeof migrations;
   notifications: typeof notifications;
   roles: typeof roles;

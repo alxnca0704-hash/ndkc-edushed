@@ -63,7 +63,12 @@ export type RepairTrigger =
    * of their placed sessions. The new blocks are already in `input.availability`.
    * Which of their classes actually broke is worked out here, not passed in.
    */
-  | { kind: "teacher-availability-changed"; teacherId: string };
+  | { kind: "teacher-availability-changed"; teacherId: string }
+  /**
+   * Schedules from different departments were combined, creating cross-department
+   * resource conflicts (shared rooms or cross-department teacher clashes).
+   */
+  | { kind: "cross-department-conflict"; subjectIds?: readonly string[] };
 
 /** Why a repair stopped, for the analysis the thesis's benchmark reports. */
 export type RepairOutcome =
@@ -182,6 +187,14 @@ function triggerSeeds(
 ): string[] {
   if (trigger.kind === "class-edited") {
     return [trigger.subjectId];
+  }
+  if (trigger.kind === "cross-department-conflict") {
+    if (trigger.subjectIds && trigger.subjectIds.length > 0) {
+      return [...trigger.subjectIds];
+    }
+    return input.subjects
+      .filter((subject) => grouped.has(subject.id))
+      .map((subject) => subject.id);
   }
   // Availability belongs to a teacher, so every class they teach is a candidate
   // seed; the conflict closure below drops the ones the change did not break.
